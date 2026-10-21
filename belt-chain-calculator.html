@@ -507,7 +507,10 @@ svg text.bv-t{fill:var(--ink-2);font-family:var(--mono)}
 .consent-ic{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:10px;background:var(--accent-soft);color:var(--accent)}
 .consent-ic svg{width:21px;height:21px;animation:nibble 1s ease-in-out .5s 2}
 .consent p{margin:0 0 12px;font-size:13px;line-height:1.5;color:var(--ink-2)}
-.consent-btns{display:flex;justify-content:flex-end;gap:8px}
+.consent-btns{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.consent-btns .consent-del{margin-right:auto;color:var(--bad);border-color:var(--bad-edge)}
+.consent p.consent-state{margin-top:-4px;padding:8px 10px;border-radius:10px;background:var(--panel-2);font-size:12.5px;color:var(--ink-2)}
+.consent p.consent-state b{color:var(--ink)}
 .consent-x{appearance:none;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--ink-3);font:400 20px/1 var(--sans);cursor:pointer}
 .consent-x:hover{background:var(--panel-2);color:var(--ink)}
 @media (max-width:560px){.consent{left:12px;right:12px;top:12px;width:auto}}
@@ -1289,7 +1292,7 @@ svg .belt-over-s{fill:none;stroke:var(--bad)}
     </div>
     <p class="keys-hint">Keyboard: <kbd>1</kbd>–<kbd>5</kbd> switch tabs · <kbd>←</kbd> <kbd>→</kbd> switch between the belt and chain pages · <kbd>↑</kbd> <kbd>↓</kbd> switch mm ⇄ in.</p>
     <p id="cookie-row"><button type="button" class="linkbtn" id="cookie-open">Cookie settings</button> · settings are only ever stored in this browser.</p>
-    <p class="credit">Made by Puro, built special for AXIS robotics, for public use</p>
+    <p class="credit">Made by Puro, built special for AXIS robotics, for public use.</p>
     <ul class="contact" aria-label="Contact">
       <li><span class="ck">Donations</span><a href="tel:+77789829355">+7 778 982 93 55</a><button type="button" class="kcopy" data-copy="+77789829355" title="Copy +77789829355" aria-label="Copy donations number"></button></li>
       <li><span class="ck">GitHub</span><a href="https://github.com/purom" target="_blank" rel="noopener">purom</a><button type="button" class="kcopy" data-copy="https://github.com/purom" title="Copy https://github.com/purom" aria-label="Copy GitHub link"></button></li>
@@ -1302,7 +1305,8 @@ svg .belt-over-s{fill:none;stroke:var(--bad)}
 <div class="consent" id="consent" role="dialog" aria-label="Cookie consent" hidden>
   <div class="consent-top"><span class="consent-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M21 12.5A9 9 0 1 1 11.5 3a3 3 0 0 0 3.5 3.5 3 3 0 0 0 3 3 3 3 0 0 0 3 3z"/><circle cx="8.5" cy="10" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="15.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="16.2" cy="13" r=".9" fill="currentColor" stroke="none"/><circle cx="7.8" cy="15" r=".9" fill="currentColor" stroke="none"/></svg></span><b>Remember your settings?</b><button type="button" class="consent-x" data-consent="later" aria-label="Ask me later">×</button></div>
   <p>This page can keep your inputs in browser storage (cookies) so they're still here next time you open it. Nothing leaves your device.</p>
-  <div class="consent-btns"><button type="button" class="btn sm" data-consent="no">No thanks</button><button type="button" class="btn sm primary" data-consent="yes">Accept</button></div>
+  <p class="consent-state" id="consent-state" hidden></p>
+  <div class="consent-btns"><button type="button" class="btn sm consent-del" data-consent="delete" id="consent-del" hidden>Delete saved data</button><button type="button" class="btn sm" data-consent="no">No thanks</button><button type="button" class="btn sm primary" data-consent="yes">Accept</button></div>
 </div></div>
 
 <script>
@@ -2683,8 +2687,41 @@ function download(name, text, type = 'application/dxf') {
 
 /* ---------------- animated to-scale layout ---------------- */
 const sysReduce = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+/* remembered settings live in browser storage and are mirrored in cookies, so either one brings them back
+   (cookies don't work on file:// pages, browser storage can be cleared on its own). Long values are split over
+   several cookies (k.0, k.1 … with the count in k.n) to stay under the ~4 KB cookie limit. */
+const CK = {
+  ok: (() => { try { document.cookie = '__ck=1; path=/; SameSite=Lax'; const y = document.cookie.includes('__ck=1'); document.cookie = '__ck=; max-age=0; path=/'; return y; } catch (_) { return false; } })(),
+  get(k) { if (!this.ok) return null; const m = document.cookie.match(new RegExp(`(?:^|; )${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]*)`)); return m ? decodeURIComponent(m[1]) : null; },
+  set(k, v) { if (this.ok) document.cookie = `${k}=${encodeURIComponent(v)}; max-age=31536000; path=/; SameSite=Lax`; },
+  del(k) { if (this.ok) document.cookie = `${k}=; max-age=0; path=/; SameSite=Lax`; },
+};
+const LS = (() => { try { const k = '__belt_t'; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; } catch (_) { return null; } })();
+const PS = {
+  getItem(k) {
+    const v = LS && LS.getItem(k);
+    if (v != null) return v;
+    const n = +CK.get(`${k}.n`);
+    if (!(n > 0)) return CK.get(k);
+    let out = '';
+    for (let i = 0; i < n; i++) { const p = CK.get(`${k}.${i}`); if (p == null) return null; out += p; }
+    return out;
+  },
+  setItem(k, v) {
+    v = String(v);
+    try { if (LS) LS.setItem(k, v); } catch (_) { /* full */ }
+    if (!CK.ok) return;
+    this.dropCookies(k);
+    if (v.length <= 1000) { CK.set(k, v); return; }
+    const parts = v.match(/[\s\S]{1,1000}/g);
+    parts.forEach((p, i) => CK.set(`${k}.${i}`, p));
+    CK.set(`${k}.n`, parts.length);
+  },
+  removeItem(k) { try { if (LS) LS.removeItem(k); } catch (_) { /* blocked */ } this.dropCookies(k); },
+  dropCookies(k) { const n = +CK.get(`${k}.n`) || 0; for (let i = 0; i < n; i++) CK.del(`${k}.${i}`); CK.del(`${k}.n`); CK.del(k); },
+};
 let motionPref = null;
-try { if (localStorage.getItem('belt-consent') === 'yes') motionPref = localStorage.getItem('belt-motion'); } catch (_) { /* storage blocked */ }
+try { if (PS.getItem('belt-consent') === 'yes') motionPref = PS.getItem('belt-motion'); } catch (_) { /* storage blocked */ }
 let reduceMotion = motionPref ? motionPref === 'off' : sysReduce;   // the header switch overrides the OS setting
 const ANIM = { playing: !reduceMotion, speed: 1, cur: 0, raf: 0, last: 0 };
 let PAGE = 'belt';                                  // 'belt' | 'chain' (the chain page is static: no animation loop)
@@ -5324,11 +5361,11 @@ function restoreChain(k) {
 syncChainTypes();
 
 /* ---------------- remembered settings (browser storage, only after consent) ---------------- */
-const STORE = (() => { try { const k = '__belt_t'; localStorage.setItem(k, k); localStorage.removeItem(k); return localStorage; } catch (_) { return null; } })();
+const STORE = LS || CK.ok ? PS : null;            // browser storage + cookies (see PS above); null if both are blocked
 const SKEY = 'belt-calc-settings', CKEY = 'belt-consent';
 let consent = STORE ? STORE.getItem(CKEY) : null;
 const FORM_IDS = ['a-n1', 'a-n2', 'a-len', 'a-allow', 'b-n1', 'b-n2', 'b-c', 't-n', 't-seg', 'r-w', 'r-h', 'r-diag'];
-const CHECK_IDS = ['t-loop', 't-prof', 't-top', 't-pitch', 't-segon', 'r-pitch', 'r-ruler'];
+const CHECK_IDS = ['t-loop', 't-prof', 't-top', 't-pitch', 't-segon', 'r-pitch', 'r-ruler', 'kr-pitch', 'kr-ruler'];
 function saveMotionPref(on) {
   if (consent !== 'yes' || !STORE) return;
   try { STORE.setItem('belt-motion', on ? 'on' : 'off'); } catch (_) { /* full or blocked */ }
@@ -5340,7 +5377,7 @@ function snapshot() {
     v: 1, tab: tab && tab.dataset.tab, ktab: ktab && ktab.dataset.tab, page: PAGE, k: chainSnapshot(),
     f: Object.fromEntries(FORM_IDS.map(id => [id, $(id).value])),
     c: Object.fromEntries(CHECK_IDS.map(id => [id, $(id).checked])),
-    a: { type: A.type, unit: A.unit }, b: { type: B.type, stock: stockText },
+    a: { type: A.type, unit: A.unit }, b: { type: B.type, stock: stockText, selL: B.selL }, calc: lastCalc,
     d: { type: DX.type, cur: DX.cur, p: DX.p, flhTouched: DX.flhTouched, link: DX.link },
     t: { type: BT.type, link: BT.link, wBy: BT.wBy, hBy: BT.hBy },
     speed: ANIM.speed, playing: ANIM.playing, unit: UNIT, ref: REF,
@@ -5376,6 +5413,8 @@ function restoreSettings() {
       $('a-units').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.unit === 'mm')));
     }
     if (s.b && ok(s.b.type)) { B.type = s.b.type; setType($('b-type'), B.type); }
+    if (s.b && typeof s.b.selL === 'number' && s.b.selL > 0) B.selL = s.b.selL;      // the belt picked in the Belt length list
+    if (s.calc === 'c2c' || s.calc === 'length') lastCalc = s.calc;
     if (s.b && s.b.stock && typeof s.b.stock === 'object') Object.keys(s.b.stock).forEach(k => { if (ok(k) && typeof s.b.stock[k] === 'string') stockText[k] = s.b.stock[k]; });
     Object.entries(s.f || {}).forEach(([id, v]) => { if (FORM_IDS.includes(id) && typeof v === 'string' && v !== '') $(id).value = v; });
     Object.entries(s.c || {}).forEach(([id, v]) => { if (CHECK_IDS.includes(id)) $(id).checked = !!v; });
@@ -5408,7 +5447,15 @@ function restoreSettings() {
     return s;
   } catch (_) { return null; }
 }
-function showConsent() { const c = $('consent'); c.classList.remove('out'); c.hidden = false; }
+function consentState() {                            // what the cookie window says about your current choice
+  const st = $('consent-state'), del = $('consent-del');
+  st.hidden = !consent;
+  if (consent === 'yes') st.innerHTML = '<b>Accepted</b> — your settings are remembered in this browser.';
+  else if (consent === 'no') st.innerHTML = '<b>Declined</b> — nothing is stored except this choice.';
+  del.hidden = !consent;
+  document.querySelectorAll('#consent [data-consent="yes"], #consent [data-consent="no"]').forEach(b => b.classList.toggle('primary', b.dataset.consent === (consent === 'no' ? 'no' : 'yes')));
+}
+function showConsent() { const c = $('consent'); consentState(); c.classList.remove('out'); c.hidden = false; }
 function hideConsent() {
   const c = $('consent');
   c.classList.add('out');
@@ -5418,10 +5465,17 @@ $('consent').addEventListener('click', e => {
   const b = e.target.closest('[data-consent]');
   if (!b) return;
   const v = b.dataset.consent;
+  if (v === 'delete') {                                // forget everything: settings, motion choice and the consent itself
+    clearTimeout(saveT);
+    [SKEY, CKEY, 'belt-motion'].forEach(k => STORE && STORE.removeItem(k));
+    consent = null; consentState();
+    toast('All saved data deleted. The page keeps what you see until you reload it.');
+    return;                                            // the window stays open, so you can choose again
+  }
   if (v === 'yes' || v === 'no') {
     consent = v;
     try {
-      STORE.setItem(CKEY, v);
+      STORE.setItem(CKEY, v);                          // the choice itself is always remembered
       if (v === 'no') { STORE.removeItem(SKEY); STORE.removeItem('belt-motion'); }
     } catch (_) { /* blocked */ }
     if (v === 'yes') { saveNow(); if (motionTouched) saveMotionPref(!reduceMotion); toast('Your settings will be remembered in this browser.'); }
@@ -5955,7 +6009,7 @@ const startKTab = TAB_ORDERS.chain.includes(hashTab) ? hashTab : (saved && TAB_O
 const startPage = hashTab === 'chain' || TAB_ORDERS.chain.includes(hashTab) ? 'chain'
   : TAB_ORDERS.belt.includes(hashTab) ? 'belt' : (saved && saved.page === 'chain' ? 'chain' : 'belt');
 renderA();
-renderB(false);
+renderB(true);                                      // keeps a remembered pick if it still fits
 addInd($('a-units'), 'button[aria-pressed="true"]', 'u-ind');
 addInd($('sys-units'), 'button[aria-pressed="true"]', 'u-ind');
 if (saved && saved.unit === 'in') setUnit('in');
