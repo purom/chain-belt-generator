@@ -692,7 +692,7 @@ svg .belt-over-s{fill:none;stroke:var(--bad)}
           <span class="lg">Chain Generator</span><span class="sh">Chain generator</span>
         </button>
       </nav>
-      <p class="page-sub" id="page-sub">Center distance, belt length, pulley &amp; belt DXF for HTD, GT2 and MXL / XL / L / H belts</p>
+      <p class="page-sub" id="page-sub">Center distance, belt length, pulley &amp; belt DXF for HTD, GT2, GT3 and MXL / XL / L / H belts</p>
     </div>
     <div class="top-r"><div class="units sys-u" id="sys-units" role="group" aria-label="Units"><button type="button" data-sys="mm" aria-pressed="true" title="Metric (millimetres)">mm</button><button type="button" data-sys="in" aria-pressed="false" title="US customary (inches)">in</button></div><label class="check motion-t"><input type="checkbox" id="motion-on"><span>Animations</span></label>
     <div class="tabs" id="tabs-belt" role="tablist"><span class="tab-ind" aria-hidden="true"></span>
@@ -1322,6 +1322,9 @@ const BELTS = {
   HTD3M: { label: 'HTD 3M',  pitch: 3, pld: 0.381,  toothH: 1.17, thick: 2.4,  minT: 10, code: '3M',  gD: 1.289, gRb: 0.8552, gA: 4.75, gRt: 0.2586 },
   GT2_2: { label: 'GT2 2mm', pitch: 2, pld: 0.254,  toothH: 0.75, thick: 1.38, minT: 12, code: '2GT', gD: 0.764, gRb: 0.5722, gA: 11,   gRt: 0.1584 },
   GT2_3: { label: 'GT2 3mm', pitch: 3, pld: 0.381,  toothH: 1.14, thick: 2.4,  minT: 12, code: '3GT', gD: 1.169, gRb: 0.8783, gA: 11,   gRt: 0.2431 },
+  // GT3 (the newer, stronger GT): the 3 mm groove matches GT2 3mm; the 5 mm one is the 3 mm groove scaled by 5/3
+  GT3_3: { label: 'GT3 3mm', pitch: 3, pld: 0.381,  toothH: 1.14, thick: 2.41, minT: 12, code: '3MGT', gD: 1.169, gRb: 0.8783, gA: 11,  gRt: 0.2431 },
+  GT3_5: { label: 'GT3 5mm', pitch: 5, pld: 0.5715, toothH: 1.91, thick: 3.81, minT: 18, code: '5MGT', gD: 1.948, gRb: 1.4638, gA: 11,  gRt: 0.4052 },
   // ANSI / RMA inch-pitch trapezoidal belts (ISO 5296 belt, ISO 5294 pulley grooves): 40° teeth with flat tips.
   // gW = groove bottom width (sharp corners), gRb = its corner radius, tR = belt tooth tip corner radius.
   MXL: { label: 'MXL', pitch: 2.032,  pld: 0.254, toothH: 0.51, thick: 1.14, minT: 10, code: 'MXL', inch: true, gD: 0.69, gW: 0.84, gRb: 0.25, gA: 20, gRt: 0.13, tR: 0.13 },
@@ -1337,6 +1340,8 @@ const STOCK = {
   HTD3M: [111,120,129,141,150,159,165,174,180,186,195,201,207,213,225,231,240,252,255,264,270,282,288,300,312,318,330,339,345,357,363,375,384,390,405,420,426,447,450,474,486,501,513,531,552,564,579,597,600,633,648,669,690,711,735,750,771,804,840,873,900,945,981,1002,1050],
   GT2_2: [100,110,112,120,122,130,140,148,150,158,160,170,180,188,200,202,210,220,232,240,250,260,270,280,288,300,310,320,330,348,350,360,376,380,400,420,440,450,480,488,500,520,550,560,600,610,640,650,700,750,800,852,900,1000],
   GT2_3: [150,168,180,195,201,210,225,240,252,255,270,285,300,330,345,360,390,405,420,450,480,501,540,570,600,630,690,720,750,801,840,900,960,1002],
+  GT3_3: [150,168,180,195,201,210,225,240,252,255,270,285,300,330,345,360,390,405,420,450,480,501,540,570,600,630,690,720,750,801,840,900,960,1002],
+  GT3_5: [225,255,280,300,325,350,375,400,425,450,475,500,535,565,600,635,670,700,740,800,850,900,950,1000,1050,1125,1200,1270,1420,1500],
 };
 
 const byTeeth = (k, teeth) => teeth.map(t => +(t * BELTS[k].pitch).toFixed(3));
@@ -3371,7 +3376,7 @@ function applyHolePreset(v) {
 }
 function boreToCustom() { if (BORE_SET[DX.borePre]) { DX.borePre = 'custom'; setType($('d-bore-preset'), 'custom'); } }
 function holesToCustom() { if (DX.holePre === 'sonic' || DX.holePre === 'servo') { DX.holePre = 'custom'; setType($('d-hole-preset'), 'custom'); } }
-const FLANGE_DEFAULT = { HTD5M: 4, HTD3M: 2.5, GT2_2: 1.5, GT2_3: 2.5, MXL: 1.5, XL: 2.5, L: 3.5, H: 4 };
+const FLANGE_DEFAULT = { HTD5M: 4, HTD3M: 2.5, GT2_2: 1.5, GT2_3: 2.5, GT3_3: 2.5, GT3_5: 4, MXL: 1.5, XL: 2.5, L: 3.5, H: 4 };
 let lastCalc = 'c2c';
 
 function dxfSettings(i = DX.cur) {
@@ -3543,9 +3548,9 @@ function thickRange(belt) {
   return [lo, hi];
 }
 // inch belts come in inch widths: 1/8, 3/16, 1/4 … 2 in (part-number codes 012, 019, 025 … 200)
-const W_STD = { HTD5M: [9, 15, 25], HTD3M: [6, 9, 15], GT2_2: [6, 9, 12], GT2_3: [6, 9, 12, 15],
+const W_STD = { HTD5M: [9, 15, 25], HTD3M: [6, 9, 15], GT2_2: [6, 9, 12], GT2_3: [6, 9, 12, 15], GT3_3: [6, 9, 15], GT3_5: [9, 15, 25],
   MXL: [3.175, 4.7625, 6.35], XL: [6.35, 7.9375, 9.525], L: [12.7, 19.05, 25.4], H: [19.05, 25.4, 38.1, 50.8] };
-const W_DEF = { HTD5M: 15, HTD3M: 9, GT2_2: 6, GT2_3: 9, MXL: 6.35, XL: 9.525, L: 12.7, H: 25.4 };
+const W_DEF = { HTD5M: 15, HTD3M: 9, GT2_2: 6, GT2_3: 9, GT3_3: 9, GT3_5: 15, MXL: 6.35, XL: 9.525, L: 12.7, H: 25.4 };
 const W_MIN = 3, W_MAX = 51;
 const beltW = k => BT.wBy[k] >= W_MIN && BT.wBy[k] <= W_MAX ? BT.wBy[k] : W_DEF[k];
 const wStep = b => b.inch ? IN / 32 : 1;                 // width slider: 1/32 in or 1 mm
@@ -3963,7 +3968,7 @@ const pageOfTab = name => (name.startsWith('k-') ? 'chain' : 'belt');
 /* ---- top-level pages: the timing-belt calculator and the chain generator ---- */
 const pagesEl = document.querySelector('.pages'), pageInd = pagesEl.querySelector('.page-ind');
 const PAGE_INFO = {
-  belt: { title: 'Timing Belt Calculator', sub: 'Center distance, belt length, pulley & belt DXF for HTD, GT2 and MXL / XL / L / H belts' },
+  belt: { title: 'Timing Belt Calculator', sub: 'Center distance, belt length, pulley & belt DXF for HTD, GT2, GT3 and MXL / XL / L / H belts' },
   chain: { title: 'Chain Generator', sub: 'Roller chain C2C, chain length, sprocket DXF and chain DXF / STEP — ANSI, ISO, moto and bike chains' },
 };
 function movePageInd() {
