@@ -15,6 +15,20 @@ function setType(box, value) {
   const i = box.querySelector(`input[value="${value}"]`);
   if (i) i.checked = true;
 }
+/* re-run a results panel when its answer arrives from the Python server (static/api.js); the open tab follows, as it
+   may read that panel's layout */
+const againFor = (fn, tab) => () => {
+  fn();
+  const t = (document.querySelector(`#tabs-${PAGE} .tab[aria-selected="true"]`) || {}).dataset?.tab;
+  if (t && t !== tab) renderTab(t);
+  scheduleCheck();
+};
+/* keep keyboard focus on a table row when the table is drawn again */
+function keepRowFocus(res, attr, paint) {
+  const a = document.activeElement, v = res.contains(a) && a.getAttribute(attr);
+  paint();
+  if (v) { const t = res.querySelector(`tr[${attr}="${v}"]`); if (t) t.focus(); }
+}
 
 
 
@@ -34,24 +48,6 @@ function kvHTML(belt, g, N1, N2) {
     ['OD clearance', `${len(g.gap, 2)}`, fl(g.gap, 2)],
   ]);
 }
-
-function checks(belt, g) {
-  const out = [];
-  if (!g.valid) return out;
-  if (g.gap <= 0) {
-    out.push(['bad', `Pulley outside diameters overlap by ${len(-g.gap, 2)}.`]);
-  } else if (g.gap < 2 * belt.thick) {
-    out.push(['warn', `Only ${len(g.gap, 2)} between the pulley ODs — flanges usually reach ~${len(belt.thick, 1)} past the OD, so flanged pulleys may touch.`]);
-  }
-  if (g.timSmall < 6) {
-    out.push(['warn', `Only ${f(g.timSmall, 1)} teeth in mesh on the ${g.Nsmall}T pulley (${f(deg(g.wrapSmall), 0)}° wrap). Belt ratings assume 6 or more — capacity drops and tooth-skipping gets likelier.`]);
-  }
-  if (g.Nsmall < belt.minT) {
-    out.push(['warn', `${g.Nsmall}T is below the commonly recommended minimum for ${belt.label} (~${belt.minT}T); expect shorter belt life.`]);
-  }
-  return out;
-}
-
 
 
 /* ---------------- animated to-scale layout ---------------- */
@@ -257,37 +253,19 @@ function renderA() {
     meta.textContent = ''; drawLayout(svg, null); return;
   }
 
-  const info = [];
-  let teeth;
-  if (A.unit === 'teeth') {
-    teeth = Math.max(1, Math.round(raw));
-    if (teeth !== raw) info.push(['info', `Belts have a whole number of teeth — using ${teeth}T.`]);
-    rollTo(hint, `= ${lenR(teeth * p)} pitch length · ${partNo(belt, teeth * p, beltW(belt.key))}`);
-  } else {
-    teeth = Math.max(1, Math.round(raw / p));
-    if (Math.abs(raw / p - teeth) > 1e-6) {
-      info.push(['info', `${len(raw, 2)} isn't a multiple of the ${lenR(p)} pitch — using the nearest real belt, ${teeth}T = ${lenR(teeth * p)}.`]);
-    }
-    rollTo(hint, `= ${teeth} teeth · ${partNo(belt, teeth * p, beltW(belt.key))}`);
-  }
-
-  const L = teeth * p;
-  const g0 = analyze(belt, N1, N2, NaN);
-  const C = solveCenter(L, g0.r1, g0.r2);
-  const g = analyze(belt, N1, N2, C);
+  const teeth = Math.max(1, Math.round(A.unit === 'teeth' ? raw : raw / p)), L = teeth * p;
+  rollTo(hint, A.unit === 'teeth' ? `= ${lenR(L)} pitch length · ${partNo(belt, L, beltW(belt.key))}` : `= ${teeth} teeth · ${partNo(belt, L, beltW(belt.key))}`);
   rollTo(meta, `${belt.label} · ${teeth}T belt (${lenR(L)}) · ${N1}T / ${N2}T · ${beltSize(belt)}`);
 
-  if (!g.valid || g.gap <= 0) {
-    const m = minTeethForPair(belt, N1, N2);
-    res.innerHTML = resetNumbers(res) + errorBlock('Belt too short',
-      `A ${teeth}T (${lenR(L)}) ${belt.label} belt can't go around ${N1}T + ${N2}T pulleys without them colliding. Shortest belt that clears: <b>${m}T (${lenR(m * p)})</b>.`) + notesHTML(info);
-    drawLayout(svg, g.valid ? { belt, N1, N2, g, labelC: C } : null);
+  const r = apiCalc('a', 'belt/c2c', { type: A.type, n1: N1, n2: N2, length: raw, length_unit: A.unit, allowance: allow, width: beltW(belt.key) }, againFor(renderA, 'c2c'));
+  if (r === API_PENDING) return;                   // the Python server is on it: the last result stays until it answers
+  if (r.error) {
+    res.innerHTML = resetNumbers(res) + errorBlock(r.code === 'too_short' ? 'Belt too short' : 'Missing input', emph(r.error)) + notesHTML(apiNotes(r.notes));
+    drawLayout(svg, r.geometry ? { belt, N1, N2, g: r.geometry, labelC: r.C } : null);
     return;
   }
 
-  const Cd = C + allow;
-  const notes = [...info, ...checks(belt, g)];
-  if (!notes.some(n => n[0] === 'warn' || n[0] === 'bad')) notes.push(['ok', 'Geometry looks good.']);
+  const C = r.C, g = r.geometry, Cd = r.C_set, notes = apiNotes(r.notes);
 
   res.innerHTML = `
     <div class="hero">
@@ -330,7 +308,6 @@ function rowHTML(r, tag) {
 const tableHTML = (rows, tagFor) =>
   `<div class="tbl"><table class="opts"><thead><tr><th>Belt</th><th data-k="th1">Length ${U()}</th><th data-k="th2">C2C ${U()}</th><th data-k="th3">Δ ${U()}</th></tr></thead>
    <tbody>${rows.map(r => rowHTML(r, tagFor(r))).join('')}</tbody></table></div>`;
-const closest = rows => rows.reduce((a, r) => (!a || Math.abs(r.dC) < Math.abs(a.dC)) ? r : a, null);
 
 function renderB(keepSel) {
   const belt = BELTS[B.type], p = belt.pitch;
@@ -344,49 +321,21 @@ function renderB(keepSel) {
     meta.textContent = ''; drawLayout(svg, null); return;
   }
 
-  const g = analyze(belt, N1, N2, Ct);
-  if (!g.valid || g.gap <= 0) {
-    res.innerHTML = resetNumbers(res) + errorBlock('Pulleys overlap',
-      `At ${len(Ct, 2)} the ${N1}T and ${N2}T pulleys collide — their outside diameters need at least <b>${len((g.od1 + g.od2) / 2, 2)}</b> between centers.`);
+  const r = apiCalc('b', 'belt/length', { type: B.type, n1: N1, n2: N2, target_c: Ct, stock: stockList(B.type), selected: keepSel ? B.selL : null, width: beltW(belt.key) },
+    againFor(() => renderB(keepSel), 'length'));
+  if (r === API_PENDING) return;
+  if (r.error) {
+    B.flash = false;
+    res.innerHTML = resetNumbers(res) + errorBlock({ overlap: 'Pulleys overlap', none: 'No belt fits' }[r.code] || 'Missing input', emph(r.error));
     meta.textContent = `${belt.label} · ${N1}T / ${N2}T`;
-    drawLayout(svg, g.valid ? { belt, N1, N2, g, labelC: Ct } : null);
+    drawLayout(svg, r.geometry ? { belt, N1, N2, g: r.geometry, labelC: Ct } : null);
     return;
   }
+  const { rows, best, stock_rows: stockRows, stock_best: stockBest, selected: sel, geometry: gs, exact } = r, Lx = r.ideal_length, tx = r.ideal_teeth;
+  B.selL = sel.L;
+  const notes = apiNotes(r.notes);
 
-  const { Lx, tx, rows } = integerOptions(belt, N1, N2, Ct);
-  const okRows = rows.filter(r => r.ok);
-  const best = closest(okRows);
-  const exact = Math.abs(best.dC) < 0.005;
-
-  // stock list suggestions: two nearest shorter + two nearest longer
-  const list = stockList(B.type);
-  const offPitch = list.filter(L => Math.abs(L / p - Math.round(L / p)) > 1e-6);
-  const stockAll = list.filter(L => !offPitch.includes(L)).map(L => {
-    const C = solveCenter(L, g.r1, g.r2), a = analyze(belt, N1, N2, C);
-    return { t: Math.round(L / p), L, C, dC: C - Ct, ok: a.valid && a.gap > 0 };
-  }).filter(r => r.ok);
-  const stockRows = [
-    ...stockAll.filter(r => r.L <= Lx + 1e-6).slice(-2),
-    ...stockAll.filter(r => r.L > Lx + 1e-6).slice(0, 2),
-  ];
-  const stockBest = closest(stockRows);
-
-  const pool = [...okRows, ...stockRows];
-  if (!keepSel || !pool.some(r => r.L === B.selL)) B.selL = best.L;
-  const sel = pool.find(r => r.L === B.selL);
-  const gs = analyze(belt, N1, N2, sel.C);
-
-  const notes = [];
-  if (Math.abs(sel.dC) >= 0.005) {
-    notes.push(['info', sel.dC < 0
-      ? `This belt is shorter than ideal: set the pulleys <b>${len(-sel.dC, 2)} closer</b> (C2C ${len(sel.C, 3)}), otherwise it's too tight to fit.`
-      : `This belt is longer than ideal: increase the C2C by <b>${len(sel.dC, 2)}</b> to ${len(sel.C, 3)}, or take up the slack with an idler / tensioner.`]);
-  }
-  notes.push(...checks(belt, gs));
-  if (offPitch.length) notes.push(['info', `Ignored stock entries that aren't a multiple of the ${lenR(p)} pitch: ${offPitch.join(', ')}.`]);
-  if (!notes.some(n => n[0] === 'warn' || n[0] === 'bad')) notes.push(['ok', 'Geometry looks good.']);
-
-  res.innerHTML = `
+  keepRowFocus(res, 'data-l', () => { res.innerHTML = `
     <div class="hero">
       <div class="hero-label" data-k="hl">Ideal belt length @ ${len(Ct, 2)} C2C</div>
       <div class="hero-value"><span class="num" data-k="hero" data-v="${toU(Lx)}" data-d="${dU(2)}">${fl(Lx, 2)}</span><small data-k="hu">${U()}</small></div>
@@ -395,7 +344,7 @@ function renderB(keepSel) {
     <div class="pick">
       <div>
         <div class="pick-label">Selected belt</div>
-        <div class="pick-main"><span data-k="pick">${sel.t}T · ${lenR(sel.L)}</span><span class="part">${partNo(belt, sel.L, beltW(belt.key))}</span></div>
+        <div class="pick-main"><span data-k="pick">${sel.t}T · ${lenR(sel.L)}</span><span class="part">${sel.part_no}</span></div>
         <div class="pick-sub" data-k="pick-sub">C2C ${len(sel.C, 3)} · ${alt(sel.C)} · ${sgnL(sel.dC)} vs target</div>
       </div>
       <div class="pick-actions">
@@ -405,21 +354,22 @@ function renderB(keepSel) {
     </div>
     <div>
       <div class="sub-h">Whole-tooth belts <small>click a row to preview</small></div>
-      ${tableHTML(rows, r => r === best ? ['best', exact ? 'exact' : 'closest'] : null)}
+      ${tableHTML(rows, x => x.L === best.L ? ['best', exact ? 'exact' : 'closest'] : null)}
     </div>
     <div>
       <div class="sub-h">From stock list <small>${belt.label} · nearest shorter &amp; longer</small></div>
       ${stockRows.length
-        ? tableHTML(stockRows, r => r === stockBest ? ['best', 'closest'] : null)
+        ? tableHTML(stockRows, x => x.L === stockBest.L ? ['best', 'closest'] : null)
         : '<p class="empty-note">No stock size in your list fits these pulleys near this length.</p>'}
     </div>
     ${kvHTML(belt, gs, N1, N2)}
-    ${notesHTML(notes)}`;
+    ${notesHTML(notes)}`; });
 
   rollNumbers(res);
   animateHero(res);
   rollTo(meta, `${belt.label} · ${sel.t}T belt (${lenR(sel.L)}) · ${N1}T / ${N2}T · ${beltSize(belt)}`);
   drawLayout(svg, { belt, N1, N2, g: gs, labelC: sel.C });
+  if (B.flash) { B.flash = false; flashPick(); }
 }
 
 function sendToA(teeth) {
@@ -525,7 +475,6 @@ const BORE_PRE = [
   { v: 'b14', t: '14mm bearing', s: 'goBILDA 1611' },
   { v: 'custom', t: 'Custom', s: '6 shapes, any size' },
 ];
-const BORE_SET = { rev: ['hex', 5], rex: ['rex', 7], gbd: ['d', 6, 5.5], b14: ['round', 14] };
 const BORE_HINT = {
   rev: 'REV 5 mm hex shaft. 3D prints usually need +0.05 … +0.1 mm clearance.',
   rex: 'goBILDA 8 mm REX shaft: 7 mm across flats, corners rounded to Ø8. For plain 7 mm hex use Custom → hex 7.',
@@ -540,7 +489,6 @@ const HOLE_PRE = [
   { v: 'custom', t: 'Custom', s: 'any bolt circle' },
 ];
 const GB16 = [['d-hn', 4], ['d-hd', 4.3], ['d-hp', 22.627], ['d-hr', 45]];
-const holesOK = H => !H || (H.n >= 1 && H.n <= 24 && H.d > 0 && H.pcd >= 0 && Number.isFinite(H.rot));
 function setBoreShape(k) {
   DX.bore = k;
   $('d-bore-type').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.bore === k)));
@@ -556,7 +504,6 @@ function applyHolePreset(v) {
 }
 function boreToCustom() { if (BORE_SET[DX.borePre]) { DX.borePre = 'custom'; setType($('d-bore-preset'), 'custom'); } }
 function holesToCustom() { if (DX.holePre === 'sonic' || DX.holePre === 'servo') { DX.holePre = 'custom'; setType($('d-hole-preset'), 'custom'); } }
-const FLANGE_DEFAULT = { HTD5M: 4, HTD3M: 2.5, GT2_2: 1.5, GT2_3: 2.5, GT3_3: 2.5, GT3_5: 4, MXL: 1.5, XL: 2.5, L: 3.5, H: 4 };
 let lastCalc = 'c2c';
 
 function dxfSettings(i = DX.cur) {
@@ -566,7 +513,7 @@ function dxfSettings(i = DX.cur) {
   const holes = s.holePre === 'none' ? null : { n: Math.round(v('d-hn')), d: v('d-hd'), pcd: v('d-hp'), rot: v('d-hr') || 0 };
   return {
     bore: s.borePre === 'none' ? 'none' : s.bore, borePre: s.borePre, holePre: s.holePre, n: Math.round(v('d-n')),
-    boreNom: sz, boreSize: sz + 2 * cl, boreFlat: v('d-flat') + 2 * cl, clear: cl, holes, fit: v('d-fit') || 0,
+    boreNom: sz, boreSize: sz + 2 * cl, flatNom: v('d-flat'), boreFlat: v('d-flat') + 2 * cl, clear: cl, holes, fit: v('d-fit') || 0,
     flange: !!s.c['d-flange'], flh: v('d-flh') || 0, pitch: !!s.c['d-pitch'],
   };
 }
@@ -589,12 +536,6 @@ function updateChips() {
   $('d-chips').hidden = DX.link;
   $('d-link').checked = DX.link;
   $('d-link-note').textContent = DX.link ? `· teeth & belt sync with the ${layoutSrc().tab} tab` : '· pulleys are independent of the layout';
-}
-function dxfName(belt, N, st) {
-  const pre = { none: '', rev: '_rev5hex', rex: '_rex8', gbd: '_gbD6', b14: '_brg14' }[st.borePre];
-  const b = pre !== undefined ? pre : `_${{ round: 'd', hex: 'hex', square: 'sq', rex: 'rex', d: 'D', dd: 'DD' }[st.bore]}${+st.boreNom.toFixed(3)}`;
-  const H = st.holes, h = !H ? '' : st.holePre === 'custom' ? `_${H.n}x${+H.d.toFixed(2)}on${+H.pcd.toFixed(2)}` : '_gb16';
-  return `pulley_${belt.key}_${N}T${b}${h}.dxf`;
 }
 function boreLabel(st) {
   if (st.bore === 'none') return ['none', null];
@@ -628,13 +569,15 @@ function renderD() {
   if (!(N >= 6 && N <= 400)) return fail('Missing input', 'Enter between 6 and 400 teeth.');
   if (st.bore !== 'none' && !(st.boreSize > 0)) return fail('Missing input', 'Enter a bore size, or pick “No bore”.');
   if (!holesOK(st.holes)) return fail('Missing input', 'Check the mounting-hole fields (1–24 holes, size and bolt circle).');
-  const doc = singleDoc(belt, N, st);
-  if (doc.error) return fail("Can't build this pulley", doc.error);
+  DX.req = { type: DX.type, n: N, ...pulleyReq(st) };
+  const r = apiCalc('d', 'belt/pulley', DX.req, againFor(renderD, 'dxf'));
+  if (r === API_PENDING) return;
+  if (r.error) return fail("Can't build this pulley", emph(r.error));
 
-  const part = doc.part;
-  DX.doc = { ...doc, belt, N, st, name: dxfName(belt, N, st) };
+  const part = r.part, doc = { part, flR: r.flR, fx: r.fx };
+  DX.doc = { ...doc, belt, N, st, name: r.name };
   const [bl, bc] = boreLabel(st);
-  const layers = [...new Set(doc.ents.map(e => e.layer))].join(', ');
+  const layers = r.layers.join(', ');
 
   const notes = [['info', belt.inch
     ? 'Groove = ISO 5294 trapezoidal groove (40° flanks, flat bottom, corner and tip radii) as true arcs — good for 3D printing, laser or CNC. Test-fit before relying on it under load.'
@@ -727,10 +670,6 @@ function thickRange(belt) {
   const lo = Math.ceil((belt.toothH + belt.pld + 0.2) * 20) / 20, hi = Math.round(belt.thick * 2.5 * 20) / 20;
   return [lo, hi];
 }
-// inch belts come in inch widths: 1/8, 3/16, 1/4 … 2 in (part-number codes 012, 019, 025 … 200)
-const W_STD = { HTD5M: [9, 15, 25], HTD3M: [6, 9, 15], GT2_2: [6, 9, 12], GT2_3: [6, 9, 12, 15], GT3_3: [6, 9, 15], GT3_5: [9, 15, 25],
-  MXL: [3.175, 4.7625, 6.35], XL: [6.35, 7.9375, 9.525], L: [12.7, 19.05, 25.4], H: [19.05, 25.4, 38.1, 50.8] };
-const W_DEF = { HTD5M: 15, HTD3M: 9, GT2_2: 6, GT2_3: 9, GT3_3: 9, GT3_5: 15, MXL: 6.35, XL: 9.525, L: 12.7, H: 25.4 };
 const W_MIN = 3, W_MAX = 51;
 const beltW = k => BT.wBy[k] >= W_MIN && BT.wBy[k] <= W_MAX ? BT.wBy[k] : W_DEF[k];
 const wStep = b => b.inch ? IN / 32 : 1;                 // width slider: 1/32 in or 1 mm
@@ -852,6 +791,8 @@ function renderT() {
   const o = { loop: views.loop ? { r1: lay.o.g.r1, r2: lay.o.g.r2, C: lay.o.labelC } : null, profile: views.profile, top: views.top, seg, pitch: $('t-pitch').checked, std: std.thick };
   const doc = beltDoc(belt, n, W, o), L = +(n * p).toFixed(3), Ld = Number.isInteger(L) ? 0 : 2, back = belt.thick - belt.toothH - belt.pld;
   BT.doc = { ents: doc.ents.filter(e => e.layer !== 'OVER'), name: `belt_${belt.key}_${doc.part}${seg ? `_${doc.m}T-piece` : ''}.dxf` };
+  BT.req = { type: BT.type, teeth: n, width: W, thickness: T, loop: views.loop ? { n1: lay.o.N1, n2: lay.o.N2, center: lay.o.labelC } : null,
+    profile: views.profile, top: views.top, piece: seg, pitch: $('t-pitch').checked };
   const layers = [...new Set(BT.doc.ents.map(e => e.layer))].join(', ');
   const notes = [];
   if ($('t-loop').checked && !loopOK) {
@@ -1118,12 +1059,16 @@ function closeMenus() {
 function exportLayout(src, what) {
   const o = $(src)._last;
   if (!o || !(o.g.gap > 0)) { toast('No valid layout to export.'); return; }
-  const doc = layoutDoc({ ...o.belt, thick: beltThick(o.belt) }, o.N1, o.N2, o.labelC, [dxfSettings(0), dxfSettings(1)], what);
-  if (doc.error) { toast(doc.error); return; }
-  const c = `C${o.labelC.toFixed(2)}`, part = partNo(o.belt, doc.bo.Nt * o.belt.pitch, beltW(o.belt.key)), pair = `${o.N1}T-${o.N2}T`;
-  const name = { assembly: `assembly_${o.belt.key}_${pair}_${part}_${c}`, belt: `belt_${o.belt.key}_${part}_${c}`, pulleys: `pulleys_${o.belt.key}_${pair}_${c}` }[what] + '.dxf';
-  download(name, toDXF(doc.ents));
-  toast(`Saved ${name}`);
+  const belt = o.belt, sts = [dxfSettings(0), dxfSettings(1)], thick = beltThick(belt);
+  const teeth = Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / belt.pitch);
+  apiSave('belt/layout/dxf', { type: belt.key, n1: o.N1, n2: o.N2, teeth, center: o.labelC, width: beltW(belt.key), thickness: thick, what,
+    p1: pulleyReq(sts[0]), p2: pulleyReq(sts[1]) }, () => {
+    const doc = layoutDoc({ ...belt, thick }, o.N1, o.N2, o.labelC, sts, what);
+    if (doc.error) return doc;
+    const c = `C${o.labelC.toFixed(2)}`, part = partNo(belt, doc.bo.Nt * belt.pitch, beltW(belt.key)), pair = `${o.N1}T-${o.N2}T`;
+    const name = { assembly: `assembly_${belt.key}_${pair}_${part}_${c}`, belt: `belt_${belt.key}_${part}_${c}`, pulleys: `pulleys_${belt.key}_${pair}_${c}` }[what] + '.dxf';
+    return { name, text: toDXF(doc.ents) };
+  });
 }
 /* belt / assembly export block on the DXF tab, fed by the last calculator tab used */
 function asmHTML() {
@@ -1245,8 +1190,8 @@ $('t-wchips').addEventListener('click', e => {
 });
 $('t-results').addEventListener('click', e => {
   if (!e.target.closest('[data-dl-belt]') || !BT.doc) return;
-  download(BT.doc.name, toDXF(BT.doc.ents));
-  toast(`Saved ${BT.doc.name}`);
+  const doc = BT.doc;
+  apiSave('belt/belt/dxf', BT.req, () => ({ name: doc.name, text: toDXF(doc.ents) }), { name: doc.name });
 });
 $('d-flh').addEventListener('input', () => { DX.flhTouched = true; renderD(); });
 $('d-flange').addEventListener('change', renderD);
@@ -1276,14 +1221,19 @@ $('d-which').addEventListener('click', e => {
 });
 $('d-results').addEventListener('click', e => {
   if (e.target.closest('[data-dl-both]')) {
-    const d = bothDoc();
-    if (d.error) { toast(d.error); return; }
-    download(d.name, toDXF(d.ents)); toast(`Saved ${d.name}`);
+    const a = dxfSettings(0), b = dxfSettings(1);
+    apiSave('belt/pulleys/dxf', { type: DX.type, p1: { n: a.n, ...pulleyReq(a) }, p2: { n: b.n, ...pulleyReq(b) } }, () => {
+      const d = bothDoc();
+      return d.error ? d : { name: d.name, text: toDXF(d.ents) };
+    });
     return;
   }
   if (!e.target.closest('[data-dl-dxf]') || !DX.doc) return;
-  download(DX.doc.name, toDXF(DX.doc.ents));
-  toast(`Saved ${DX.doc.name}`);
+  const doc = DX.doc;
+  apiSave('belt/pulley/dxf', DX.req, () => {
+    const d = singleDoc(doc.belt, doc.N, doc.st);
+    return d.error ? d : { name: doc.name, text: toDXF(d.ents) };
+  }, { name: doc.name });
 });
 
 // export menus + assembly buttons
@@ -1372,7 +1322,7 @@ $('b-results').addEventListener('click', e => {
   const send = e.target.closest('[data-send]');
   if (send) { sendToA(Number(send.dataset.send)); return; }
   const tr = e.target.closest('tr[data-l]');
-  if (tr && !tr.classList.contains('dis')) { B.selL = Number(tr.dataset.l); renderB(true); flashPick(); }
+  if (tr && !tr.classList.contains('dis')) { B.selL = Number(tr.dataset.l); B.flash = true; renderB(true); }
 });
 $('b-results').addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-l]')) {
@@ -1402,7 +1352,6 @@ const K = {
   calc: 'k-c2c', doc: null,
 };
 const kch = () => CHAINS[K.type];
-const kZOK = z => Number.isFinite(z) && z >= 6 && z <= 250;
 function kLinks() {                                 // links set on the Center distance tab
   const v = +K.lenRaw;
   if (!(v > 0)) return NaN;
@@ -1474,23 +1423,6 @@ function kWrite() {
 }
 
 /* ---- C2C tab ---- */
-function chainChecks(ch, z1, z2, g, L) {
-  const out = [], zs = Math.min(z1, z2), th = z1 <= z2 ? g.th1 : g.th2, mesh = z1 <= z2 ? g.mesh1 : g.mesh2;
-  const rip = 100 * (1 - Math.cos(Math.PI / zs));
-  if (L % 2) out.push(['warn', `Odd link count: the chain needs an offset (half) link, which is weaker — ${L - 1} or ${L + 1} links close with a normal connecting link.`]);
-  if (zs < 9) out.push(['bad', `${zs}T is below the 9-tooth minimum for roller chain — rough running and fast wear.`]);
-  else if (zs < 12) out.push(['warn', `${zs}T is small: ${f(rip, 1)} % chordal speed ripple. 12+ teeth run smoother, 17+ for faster drives.`]);
-  else if (zs < 17) out.push(['info', `Chordal speed ripple ${f(rip, 1)} % on the ${zs}T sprocket — fine for slow drives, use 17+ teeth for fast ones.`]);
-  if (deg(th) < 120) out.push(['warn', `Wrap on the small sprocket is only ${f(deg(th), 0)}° — keep it above 120° (longer C2C or a smaller ratio).`]);
-  if (mesh < 3) out.push(['bad', `Only ${f(mesh, 1)} teeth in mesh on the small sprocket.`]);
-  if (Math.max(z1, z2) / zs > 7) out.push(['warn', `Ratio ${f(Math.max(z1, z2) / zs, 2)} : 1 is steep for one stage — above ~7 : 1 use two stages.`]);
-  const cp = g.C / ch.p;
-  if (cp < 20) out.push(['info', `C2C is ${f(cp, 1)} pitches — 30 to 50 pitches is the usual sweet spot for chain life.`]);
-  else if (cp > 80) out.push(['info', `Long drive (${f(cp, 0)} pitches) — support the slack span or add a tensioner.`]);
-  if (g.gap < 2) out.push(['info', `Sprocket tips are only ${len(g.gap, 2)} apart.`]);
-  if (ch.fam === 'moto' || ch.fam === 'bike') out.push(['info', `${ch.label} dimensions are typical maker values — check your chain's data sheet for plate and pin sizes.`]);
-  return out;
-}
 function chainKV(ch, z1, z2, g, L) {
   return kvGrid([
     ['Pitch Ø S1', `${len(g.pd1, 3)}`, fl(g.pd1, 3)],
@@ -1514,23 +1446,18 @@ function renderKA() {
     res.innerHTML = resetNumbers(res) + errorBlock('Missing input', 'Enter sprocket teeth (6 – 250) and a chain length.');
     drawChainLayout(svg, null); return;
   }
-  const info = [], L = kLinks();
-  if (K.unit === 'links' && L !== raw) info.push(['info', `Chains have a whole number of links — using ${L}.`]);
-  if (K.unit === 'mm' && Math.abs(raw / p - L) > 1e-6) info.push(['info', `${len(raw, 2)} isn't a multiple of the ${lenR(p)} pitch — using the nearest real chain, ${L} links = ${len(L * p, 2)}.`]);
+  const L = kLinks();
   rollTo(hint, K.unit === 'links' ? `= ${len(L * p, 2)} · ${ch.label} × ${L} links` : `= ${L} links · ${ch.label}`);
-  const s1 = sprocketOutline(ch, z1, 0), s2 = sprocketOutline(ch, z2, 0);
-  if (s1.error || s2.error) { meta.textContent = ''; res.innerHTML = resetNumbers(res) + errorBlock("Can't make this sprocket", s1.error || s2.error); drawChainLayout(svg, null); return; }
-  const C = chainCenter(ch, z1, z2, L), g = Number.isFinite(C) ? chainAnalyze(ch, z1, z2, C) : null;
+  const r = apiCalc('ka', 'chain/c2c', { type: K.type, z1, z2, length: raw, length_unit: K.unit, allowance: allow }, againFor(renderKA, 'k-c2c'));
+  if (r === API_PENDING) return;
+  if (r.error && r.code === 'sprocket') { meta.textContent = ''; res.innerHTML = resetNumbers(res) + errorBlock("Can't make this sprocket", emph(r.error)); drawChainLayout(svg, null); return; }
   rollTo(meta, `${ch.label} · ${L} links (${len(L * p, 1)}) · ${z1}T / ${z2}T`);
-  if (!g || !g.valid || !(g.gap > 0)) {
-    const m = minLinksFor(ch, z1, z2);
-    res.innerHTML = resetNumbers(res) + errorBlock('Chain too short',
-      `${L} links of ${ch.label} chain can't go around ${z1}T + ${z2}T sprockets without them colliding. Shortest chain that clears: <b>${m} links</b>${m % 2 ? ` (${m + 1} for an even count)` : ''}.`) + notesHTML(info);
-    drawChainLayout(svg, g && g.valid ? { ch, z1, z2, L, C, labelC: C, g } : null);
+  if (r.error) {
+    res.innerHTML = resetNumbers(res) + errorBlock(r.code === 'too_short' ? 'Chain too short' : 'Missing input', emph(r.error)) + notesHTML(apiNotes(r.notes));
+    drawChainLayout(svg, r.geometry ? { ch, z1, z2, L, C: r.C, labelC: r.C, g: r.geometry } : null);
     return;
   }
-  const Cd = C + allow, notes = [...info, ...chainChecks(ch, z1, z2, g, L)];
-  if (!notes.some(n => n[0] === 'warn' || n[0] === 'bad')) notes.push(['ok', 'Geometry looks good.']);
+  const C = r.C, g = r.geometry, Cd = r.C_set, notes = apiNotes(r.notes);
   res.innerHTML = `
     <div class="hero">
       <div class="hero-label" data-k="hl">Center-to-center distance${allow ? ' (incl. allowance)' : ''}</div>
@@ -1552,33 +1479,17 @@ function renderKB(keepSel) {
   const res = $('kb-results'), svg = $('kb-svg'), meta = $('kb-viz-meta');
   const fail = (t, m) => { res.innerHTML = resetNumbers(res) + errorBlock(t, m); meta.textContent = ''; drawChainLayout(svg, null); };
   if (!kZOK(z1) || !kZOK(z2) || !(Ct > 0)) { $('kb-c-hint').textContent = ''; return fail('Missing input', 'Enter sprocket teeth (6 – 250) and a target C2C.'); }
-  const s1 = sprocketOutline(ch, z1, 0), s2 = sprocketOutline(ch, z2, 0);
-  if (s1.error || s2.error) return fail("Can't make this sprocket", s1.error || s2.error);
-  const Cmin = (s1.od + s2.od) / 2 + 0.5;
-  rollTo($('kb-c-hint'), `= ${f(Ct / p, 2)} pitches · sprockets need ≥ ${len(Cmin, 1)}`);
-  if (Ct < Cmin) return fail('Sprockets collide', `At ${len(Ct, 2)} the sprocket teeth overlap — use at least ${len(Cmin, 1)} C2C.`);
-  const Lx = chainLinksAt(ch, z1, z2, Ct), Lmin = minLinksFor(ch, z1, z2), rows = [];
-  for (let L = Math.max(Lmin, 2, Math.floor(Lx) - 3); L <= Math.ceil(Lx) + 3; L++) {
-    const C = chainCenter(ch, z1, z2, L);
-    if (Number.isFinite(C) && chainAnalyze(ch, z1, z2, C).gap > 0) rows.push({ L, C, dC: C - Ct, even: L % 2 === 0 });
-  }
-  if (!rows.length) return fail('No chain fits', 'Try a larger C2C.');
-  const evens = rows.filter(r => r.even), best = (evens.length ? evens : rows).reduce((a, r) => (!a || Math.abs(r.dC) < Math.abs(a.dC) ? r : a), null);
-  if (!keepSel || !rows.some(r => r.L === K.selL)) K.selL = best.L;
-  const sel = rows.find(r => r.L === K.selL), g = chainAnalyze(ch, z1, z2, sel.C);
-  const exact = Math.abs(Lx - Math.round(Lx)) < 1e-6;
-  const notes = [];
-  if (Math.abs(sel.dC) >= 0.005) {
-    notes.push(['info', sel.dC < 0
-      ? `This chain is shorter than ideal: set the sprockets <b>${len(-sel.dC, 2)} closer</b> (C2C ${len(sel.C, 3)}), otherwise it's too tight to fit.`
-      : `This chain is longer than ideal: increase the C2C by <b>${len(sel.dC, 2)}</b> to ${len(sel.C, 3)}, or take up the slack with a tensioner / idler.`]);
-  }
-  notes.push(...chainChecks(ch, z1, z2, g, sel.L));
-  if (!notes.some(n => n[0] === 'warn' || n[0] === 'bad')) notes.push(['ok', 'Geometry looks good.']);
+  const r = apiCalc('kb', 'chain/length', { type: K.type, z1, z2, target_c: Ct, selected: keepSel ? K.selL : null }, againFor(() => renderKB(keepSel), 'k-len'));
+  if (r === API_PENDING) return;
+  if (r.min_c) rollTo($('kb-c-hint'), `= ${f(Ct / p, 2)} pitches · sprockets need ≥ ${len(r.min_c, 1)}`);
+  if (r.error) { K.flash = false; return fail({ sprocket: "Can't make this sprocket", overlap: 'Sprockets collide', none: 'No chain fits' }[r.code] || 'Missing input', emph(r.error)); }
+  const { rows, best, selected: sel, geometry: g, exact } = r, Lx = r.ideal_links;
+  K.selL = sel.L;
+  const notes = apiNotes(r.notes);
   const row = r => `<tr data-kl="${r.L}"${r.L === K.selL ? ' class="sel"' : ''} tabindex="0">
-      <td>${r.L} links${r === best ? '<span class="tag best">closest even</span>' : r.even ? '' : '<span class="tag">offset link</span>'}</td>
+      <td>${r.L} links${r.L === best.L ? '<span class="tag best">closest even</span>' : r.even ? '' : '<span class="tag">offset link</span>'}</td>
       <td data-k="l${r.L}">${fl(r.L * p, 1)}</td><td data-k="c${r.L}">${fl(r.C, 3)}</td><td data-k="d${r.L}">${sgn(toU(r.dC), dU(3))}</td></tr>`;
-  res.innerHTML = `
+  keepRowFocus(res, 'data-kl', () => { res.innerHTML = `
     <div class="hero">
       <div class="hero-label" data-k="hl">Ideal chain @ ${len(Ct, 2)} C2C</div>
       <div class="hero-value"><span class="num" data-k="hero" data-v="${Lx}" data-d="2">${f(Lx, 2)}</span><small>links</small></div>
@@ -1601,11 +1512,12 @@ function renderKB(keepSel) {
       <tbody>${rows.map(row).join('')}</tbody></table></div>
     </div>
     ${chainKV(ch, z1, z2, g, sel.L)}
-    ${notesHTML(notes)}`;
+    ${notesHTML(notes)}`; });
   rollNumbers(res);
   animateHero(res);
   rollTo(meta, `${ch.label} · ${sel.L} links (${len(sel.L * p, 1)}) · ${z1}T / ${z2}T`);
   drawChainLayout(svg, { ch, z1, z2, L: sel.L, C: sel.C, labelC: sel.C, g });
+  if (K.flash) { K.flash = false; document.querySelectorAll('#kb-results .pick, #kb-results tr.sel').forEach(x => x.classList.add('flash')); }
 }
 
 /* ---- animated layout: sprockets turn, every link moves (shares the belt layouts' animation loop) ---- */
@@ -1785,19 +1697,21 @@ function chainStepText(o, withSpr) {
 function exportChain(src, what) {
   const o = $(src)._last;
   if (!o || !(o.g && o.g.gap > 0)) { toast('No valid layout to export.'); return; }
+  const st2 = [sprSettings(0), sprSettings(1)];
+  const req = { type: o.ch.key, z1: o.z1, z2: o.z2, links: o.L, strands: K.strands, s1: partReq(st2[0]), s2: partReq(st2[1]) };
   if (what === 'step-asm' || what === 'step-chain') {
-    const r = chainStepText(o, what === 'step-asm');
-    if (r.error) { toast(r.error); return; }
-    const name = `${kName(o, what === 'step-asm' ? 'assembly' : 'chain')}.stp`;
-    download(name, r.text, 'model/step');
-    toast(`Saved ${name} · ${r.n} solids`);
+    const asm = what === 'step-asm', name = `${kName(o, asm ? 'assembly' : 'chain')}.stp`;
+    apiSave('chain/step', { ...req, model: asm ? 'assembly' : 'chain' }, () => {
+      const r = chainStepText(o, asm);
+      return r.error ? r : { name, text: r.text, n: r.n };
+    }, { name, type: 'model/step', saved: f => `Saved ${f.name} · ${f.n} solids` });
     return;
   }
-  const doc = chainLayoutDoc(o.ch, o.z1, o.z2, o.labelC, o.L, [sprSettings(0), sprSettings(1)], what);
-  if (doc.error) { toast(doc.error); return; }
   const name = `${kName(o, what)}.dxf`;
-  download(name, toDXF(doc.ents));
-  toast(`Saved ${name}`);
+  apiSave('chain/layout/dxf', { ...req, what }, () => {
+    const doc = chainLayoutDoc(o.ch, o.z1, o.z2, o.labelC, o.L, st2, what);
+    return doc.error ? doc : { name, text: toDXF(doc.ents) };
+  }, { name });
 }
 
 /* ---- Sprocket DXF tab: each sprocket keeps its own bore / holes / fit ---- */
@@ -1809,7 +1723,7 @@ function sprSettings(j) {
   const s = KS.s[j], cl = +s.clear || 0;
   return {
     z: Math.round(+s.z), bore: s.borePre === 'none' ? 'none' : s.bore, borePre: s.borePre, holePre: s.holePre,
-    boreNom: +s.size, boreSize: +s.size + 2 * cl, boreFlat: +s.flat + 2 * cl, clear: cl,
+    boreNom: +s.size, boreSize: +s.size + 2 * cl, flatNom: +s.flat, boreFlat: +s.flat + 2 * cl, clear: cl,
     holes: s.holePre === 'none' ? null : { n: Math.round(+s.hn), d: +s.hd, pcd: +s.hp, rot: +s.hr || 0 }, fit: +s.fit || 0, pitch: !!s.pitch,
   };
 }
@@ -1824,22 +1738,6 @@ function ksWrite() {
   setType($('ks-hole-preset'), s.holePre);
   $('ks-which').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.kwhich === KS.cur)));
   $('ks-link').checked = KS.link;
-}
-function kSprName(ch, z, st) {
-  const pre = { none: '', rev: '_rev5hex', rex: '_rex8', gbd: '_gbD6', b14: '_brg14' }[st.borePre];
-  const b = pre !== undefined ? pre : `_${{ round: 'd', hex: 'hex', square: 'sq', rex: 'rex', d: 'D', dd: 'DD' }[st.bore]}${+st.boreNom.toFixed(3)}`;
-  const H = st.holes, hh = !H ? '' : st.holePre === 'custom' ? `_${H.n}x${+H.d.toFixed(2)}on${+H.pcd.toFixed(2)}` : '_gb16';
-  return `sprocket_${chainTag(ch)}_${z}T${b}${hh}`;
-}
-function sprocketDoc(ch, st) {
-  const part = sprocketParts(ch, st.z, st);
-  if (part.error) return part;
-  const ents = [{ type: 'poly', layer: 'SPROCKET', verts: part.verts, bound: [0, 0, part.od / 2] }];
-  if (part.bore && part.bore.kind === 'round') ents.push({ type: 'circle', layer: 'BORE', c: [0, 0], r: part.bore.r });
-  else if (part.bore) ents.push({ type: 'poly', layer: 'BORE', verts: part.bore.verts });
-  addHoles(ents, part.holes, 0, 0);
-  if (st.pitch) ents.push({ type: 'circle', layer: 'PITCH', c: [0, 0], r: part.pd / 2 });
-  return { part, ents };
 }
 function bothSprocketsDoc() {
   const ch = kch(), out = [], th = Math.max(2, ch.p * 0.5);
@@ -1879,11 +1777,13 @@ function renderKS() {
   if (!kZOK(z)) return fail('Missing input', 'Enter between 6 and 250 teeth.');
   if (st.bore !== 'none' && !(st.boreSize > 0)) return fail('Missing input', 'Enter a bore size, or pick “No bore”.');
   if (!holesOK(st.holes)) return fail('Missing input', 'Check the mounting-hole fields (1–24 holes, size and bolt circle).');
-  const doc = sprocketDoc(ch, st);
-  if (doc.error) return fail("Can't build this sprocket", doc.error);
-  const part = doc.part, name = kSprName(ch, z, st);
-  KS.doc = { ...doc, ch, z, st, name };
-  const [bl, bc] = boreLabel(st), layers = [...new Set(doc.ents.map(e => e.layer))].join(', ');
+  KS.req = { type: K.type, z, ...partReq(st) };
+  const r = apiCalc('ks', 'chain/sprocket', KS.req, againFor(renderKS, 'k-spr'));
+  if (r === API_PENDING) return;
+  if (r.error) return fail("Can't build this sprocket", emph(r.error));
+  const part = r.part, name = r.name;
+  KS.doc = { part, ch, z, st, name };
+  const [bl, bc] = boreLabel(st), layers = r.layers.join(', ');
   const notes = [['info', 'ANSI standard tooth form (seating, working and topping curves): rollers enter and leave the gaps freely. Works for ANSI, ISO and moto / bike chains of the same pitch and roller.']];
   if (st.fit) notes.push(['info', `Seat fit offset ${sgnL(st.fit, 2)}: every tooth gap is ${len(Math.abs(st.fit), 2)} ${st.fit > 0 ? 'larger' : 'smaller'} all round.`]);
   if (z < 9) notes.push(['warn', `${z}T is below the 9-tooth minimum for roller chain.`]);
@@ -2007,6 +1907,8 @@ function renderKC() {
   const o = { loop: views.loop ? { pins: ex.pins, z1: lay.z1, z2: lay.z2, C: lay.C } : null, side: views.side, top: views.top, plates: views.plates, pitch: K.views.pitch, n: piece, strands: K.strands };
   const doc = chainDxfDoc(ch, o), tag = `${chainTag(ch)}${K.strands > 1 ? `-${K.strands}` : ''}`;
   K.doc = { ents: doc.ents, name: `chain_${tag}_${n}L${K.segOn ? `_${piece}L-piece` : ''}.dxf` };
+  K.req = { type: K.type, links: n, piece: K.segOn ? piece : 0, strands: K.strands, loop: views.loop ? { z1: lay.z1, z2: lay.z2 } : null,
+    side: !!views.side, top: !!views.top, plates: !!views.plates, pitch: !!K.views.pitch };
   const Z = chainZ(ch, K.strands), dB = bushD(ch);
   const modelOK = K.model === 'piece' || !!lay;
   const stepName = K.model === 'piece' ? `chain_${tag}_${piece}L.stp` : `${K.model === 'asm' ? 'assembly' : 'chain'}_${tag}_${lay ? `${lay.z1}T-${lay.z2}T_` : ''}${n}L.stp`;
@@ -2121,20 +2023,23 @@ function draw3D(svg, bodies) {
 }
 function chainStepDownload() {
   const ch = kch(), n = Math.round(+K.n), tag = `${chainTag(ch)}${K.strands > 1 ? `-${K.strands}` : ''}`;
-  let text, name, count;
+  const saved = f => `Saved ${f.name} · ${f.n} solids · ${(f.text.length / 1048576).toFixed(1)} MB`;
   if (K.model === 'piece') {
-    const piece = K.segOn ? Math.max(1, Math.min(n, Math.round(+K.seg) || 1)) : n;
-    const bodies = chainBodies(ch, Array.from({ length: piece + 1 }, (_, i) => [i * ch.p, 0]), false, K.strands);
-    text = stepFile(`${ch.code} chain ${piece} links`, bodies); name = `chain_${tag}_${piece}L.stp`; count = bodies.length;
-  } else {
-    const lay = kcLayout();
-    if (!lay) { toast('The loop needs a matching layout on the Center distance tab.'); return; }
-    const r = chainStepText(lay, K.model === 'asm');
-    if (r.error) { toast(r.error); return; }
-    text = r.text; count = r.n; name = `${K.model === 'asm' ? 'assembly' : 'chain'}_${tag}_${lay.z1}T-${lay.z2}T_${n}L.stp`;
+    const piece = K.segOn ? Math.max(1, Math.min(n, Math.round(+K.seg) || 1)) : n, name = `chain_${tag}_${piece}L.stp`;
+    apiSave('chain/step', { type: K.type, model: 'piece', links: n, piece: K.segOn ? piece : 0, strands: K.strands }, () => {
+      const bodies = chainBodies(ch, Array.from({ length: piece + 1 }, (_, i) => [i * ch.p, 0]), false, K.strands);
+      return { name, text: stepFile(`${ch.code} chain ${piece} links`, bodies), n: bodies.length };
+    }, { name, type: 'model/step', saved });
+    return;
   }
-  download(name, text, 'model/step');
-  toast(`Saved ${name} · ${count} solids · ${(text.length / 1048576).toFixed(1)} MB`);
+  const lay = kcLayout();
+  if (!lay) { toast('The loop needs a matching layout on the Center distance tab.'); return; }
+  const asm = K.model === 'asm', name = `${asm ? 'assembly' : 'chain'}_${tag}_${lay.z1}T-${lay.z2}T_${n}L.stp`;
+  apiSave('chain/step', { type: K.type, model: asm ? 'assembly' : 'chain', links: n, strands: K.strands, z1: lay.z1, z2: lay.z2,
+    s1: partReq(sprSettings(0)), s2: partReq(sprSettings(1)) }, () => {
+    const r = chainStepText(lay, asm);
+    return r.error ? r : { name, text: r.text, n: r.n };
+  }, { name, type: 'model/step', saved });
 }
 
 /* ---- True size (chain) ---- */
@@ -2185,12 +2090,6 @@ function renderKR() {
 }
 
 /* ---- alerts: a sprocket that can't be generated ---- */
-/* smallest tooth count above n that builds without an error (null if even the largest one fails) */
-function minTeeth(build, n, max) {
-  if (!(n >= 1) || build(max).error) return null;
-  for (let k = Math.max(n + 1, 3); k <= max; k++) if (!build(k).error) return k;
-  return null;
-}
 function sprocketProblems() {
   const out = [], ch = kch();
   for (let j = 0; j < 2; j++) {
@@ -2288,7 +2187,7 @@ $('page-chain').addEventListener('click', e => {
   const st = e.target.closest('[data-kstr]');
   if (st && !st.disabled) { K.strands = +st.dataset.kstr; renderKC(); updateInds(); return; }
   const tr = e.target.closest('tr[data-kl]');
-  if (tr) { K.selL = +tr.dataset.kl; renderKB(true); document.querySelectorAll('#kb-results .pick, #kb-results tr.sel').forEach(x => x.classList.add('flash')); return; }
+  if (tr) { K.selL = +tr.dataset.kl; K.flash = true; renderKB(true); return; }
   const send = e.target.closest('[data-ksend]');
   if (send) {
     K.unit = 'links'; K.lenRaw = +send.dataset.ksend;
@@ -2296,19 +2195,35 @@ $('page-chain').addEventListener('click', e => {
     window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
     return;
   }
-  if (e.target.closest('[data-ks-dxf]') && KS.doc) { download(`${KS.doc.name}.dxf`, toDXF(KS.doc.ents)); toast(`Saved ${KS.doc.name}.dxf`); return; }
+  if (e.target.closest('[data-ks-dxf]') && KS.doc) {
+    const doc = KS.doc, name = `${doc.name}.dxf`;
+    apiSave('chain/sprocket/dxf', KS.req, () => {
+      const d = sprocketDoc(doc.ch, doc.st);
+      return d.error ? d : { name, text: toDXF(d.ents) };
+    }, { name });
+    return;
+  }
   if (e.target.closest('[data-ks-both]')) {
-    const d = bothSprocketsDoc();
-    if (d.error) { toast(d.error); return; }
-    download(d.name, toDXF(d.ents)); toast(`Saved ${d.name}`); return;
+    const a = sprSettings(0), b = sprSettings(1);
+    apiSave('chain/sprockets/dxf', { type: K.type, s1: { z: a.z, ...partReq(a) }, s2: { z: b.z, ...partReq(b) } }, () => {
+      const d = bothSprocketsDoc();
+      return d.error ? d : { name: d.name, text: toDXF(d.ents) };
+    });
+    return;
   }
   if (e.target.closest('[data-ks-step]') && KS.doc) {
-    const sb = sprocketBodies(KS.doc.ch, KS.doc.z, KS.doc.st, K.strands, 0, 0, `Sprocket ${KS.cur + 1} ${KS.doc.z}T`);
-    if (sb.error) { toast(sb.error); return; }
-    download(`${KS.doc.name}.stp`, stepFile(`${KS.doc.ch.code} sprocket ${KS.doc.z}T`, sb.bodies), 'model/step');
-    toast(`Saved ${KS.doc.name}.stp`); return;
+    const doc = KS.doc, label = `Sprocket ${KS.cur + 1} ${doc.z}T`, name = `${doc.name}.stp`;
+    apiSave('chain/sprocket/step', { ...KS.req, strands: K.strands, label }, () => {
+      const sb = sprocketBodies(doc.ch, doc.z, doc.st, K.strands, 0, 0, label);
+      return sb.error ? sb : { name, text: stepFile(`${doc.ch.code} sprocket ${doc.z}T`, sb.bodies) };
+    }, { name, type: 'model/step' });
+    return;
   }
-  if (e.target.closest('[data-kc-dxf]') && K.doc) { download(K.doc.name, toDXF(K.doc.ents)); toast(`Saved ${K.doc.name}`); return; }
+  if (e.target.closest('[data-kc-dxf]') && K.doc) {
+    const doc = K.doc;
+    apiSave('chain/dxf', K.req, () => ({ name: doc.name, text: toDXF(doc.ents) }), { name: doc.name });
+    return;
+  }
   if (e.target.closest('[data-kc-step]')) { chainStepDownload(); return; }
   const det = e.target.closest('#kr-det [data-rdet]');
   if (det) { const [w0, h0] = detRes(); $('r-w').value = w0; $('r-h').value = h0; renderKR(); return; }
@@ -2902,4 +2817,10 @@ if ('ResizeObserver' in window) {
 }
 if (STORE && !consent) setTimeout(showConsent, 700);
 renderAlerts();
+API.onChange = () => {                               // the Python server came (back) or went: work out what's shown again
+  renderA(); renderB(true); renderKA(); renderKB(true);
+  renderTab((document.querySelector(`#tabs-${PAGE} .tab[aria-selected="true"]`) || {}).dataset?.tab);
+  renderAlerts();
+};
+apiStart();
 

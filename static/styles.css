@@ -267,6 +267,16 @@ svg text.pv-a{fill:var(--accent)}
 .foot kbd{display:inline-block;min-width:18px;padding:1px 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--panel);font:500 11px/1.4 var(--mono);color:var(--ink-2);text-align:center}
 .top-r{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .motion-t{margin:0;font-size:13px;color:var(--ink-2)}
+/* which engine computes: the local Python server, or the page itself (shown only when the server served the page) */
+.api-badge{display:inline-flex;align-items:center;gap:7px;font:500 12px/1 var(--mono);color:var(--ink-2);border:1px solid var(--line);border-radius:999px;padding:6px 11px 6px 9px;cursor:default;user-select:none;transition:color .3s,border-color .3s,background .3s}
+.api-badge[hidden]{display:none}
+.api-badge i{width:7px;height:7px;border-radius:50%;background:var(--ink-3);transition:background .3s,box-shadow .3s}
+.api-badge[data-state="live"] i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.api-badge[data-state="down"]{color:var(--warn);border-color:var(--warn-soft);background:var(--warn-soft)}
+.api-badge[data-state="down"] i{background:var(--warn)}
+.api-badge[data-state="wait"] i{animation:api-wait 1s ease-in-out infinite}
+@keyframes api-wait{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.api-badge[data-state="wait"] i{animation:none}}
 .sys-u button{padding:7px 12px}
 @media (max-width:560px){.top-r{width:100%}}
 
