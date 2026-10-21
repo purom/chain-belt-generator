@@ -265,6 +265,13 @@ svg text.pv-a{fill:var(--accent)}
 .foot{margin-top:20px;color:var(--ink-3);font-size:12.5px;line-height:1.6}
 .foot p{margin:0 0 6px}
 .foot .credit{margin-top:14px;font-size:12px;color:var(--ink-3);opacity:.8}
+.contact{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px 18px}
+.contact li{display:flex;align-items:center;gap:6px}
+.contact .ck{font-size:12px;color:var(--ink-3)}
+.contact a{font:500 12.5px var(--mono);color:var(--ink-2);text-decoration:none;border-bottom:1px dashed var(--line);transition:color .2s,border-color .2s}
+.contact a:hover{color:var(--accent);border-color:var(--accent)}
+.foot .contact .kcopy{opacity:.7}
+.foot .contact .kcopy:hover{opacity:1}
 .foot code{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
 .foot kbd{display:inline-block;min-width:18px;padding:1px 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--panel);font:500 11px/1.4 var(--mono);color:var(--ink-2);text-align:center}
 .top-r{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
@@ -1283,6 +1290,11 @@ svg .belt-over-s{fill:none;stroke:var(--bad)}
     <p class="keys-hint">Keyboard: <kbd>1</kbd>–<kbd>5</kbd> switch tabs · <kbd>←</kbd> <kbd>→</kbd> switch between the belt and chain pages · <kbd>↑</kbd> <kbd>↓</kbd> switch mm ⇄ in.</p>
     <p id="cookie-row"><button type="button" class="linkbtn" id="cookie-open">Cookie settings</button> · settings are only ever stored in this browser.</p>
     <p class="credit">Made by Puro, built special for AXIS robotics, for public use</p>
+    <ul class="contact" aria-label="Contact">
+      <li><span class="ck">Donations</span><a href="tel:+77789829355">+7 778 982 93 55</a><button type="button" class="kcopy" data-copy="+77789829355" title="Copy +77789829355" aria-label="Copy donations number"></button></li>
+      <li><span class="ck">GitHub</span><a href="https://github.com/purom" target="_blank" rel="noopener">purom</a><button type="button" class="kcopy" data-copy="https://github.com/purom" title="Copy https://github.com/purom" aria-label="Copy GitHub link"></button></li>
+      <li><span class="ck">Telegram</span><a href="https://t.me/purosancho" target="_blank" rel="noopener">@purosancho</a><button type="button" class="kcopy" data-copy="@purosancho" title="Copy @purosancho" aria-label="Copy Telegram username"></button></li>
+    </ul>
   </footer>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -5419,6 +5431,7 @@ $('consent').addEventListener('click', e => {
 });
 $('cookie-open').addEventListener('click', showConsent);
 if (!STORE) $('cookie-row').hidden = true;
+document.querySelectorAll('.contact .kcopy').forEach(b => { b.innerHTML = ICON_COPY + ICON_OK; });
 ['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, scheduleSave));
 window.addEventListener('pagehide', saveNow);
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
