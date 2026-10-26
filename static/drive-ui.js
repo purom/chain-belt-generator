@@ -27,18 +27,45 @@ function drivePulleys(tab) {
   readForm();
   return DX.p.map((p, i) => {
     const k = roleOf(i);
-    return { id: p.id, name: p.name, tag: pTag(p), side: p.side, x: +p.x || 0, y: +p.y || 0, role: k + 1,
+    return { id: p.id, name: p.name, tag: pTag(p), side: p.side, ref: k < 0 ? p.ref : null, dist: +p.dist || 0, ang: +p.ang || 0, role: k + 1,
+      x: +p.x || 0, y: +p.y || 0,                       // only used while it has no ref: being dragged
       N: Math.round(k >= 0 ? num($(ROLE_N[tab][k])) : parseFloat(p.v['d-n'])) };
   });
 }
-/* every pulley where tab `tab` puts it (role 2 at that tab's C2C) */
+/* every pulley where tab `tab` puts it (role 2 at that tab's C2C), with x / y */
 function drivePlaced(tab) {
   const o = $(`${tab}-svg`)._last, C = o && Number.isFinite(o.g.C) ? o.g.C : tab === 'b' ? num($('b-c')) || 150 : 150;
-  return drivePulleys(tab).map(p => p.role === 1 ? { ...p, x: 0, y: 0 } : p.role === 2 ? { ...p, x: C, y: 0 } : p);
+  return drivePlace(drivePulleys(tab), C);
 }
+/* dimension pulley i from its ref so that it sits at (x, y) of tab `tab` */
+function driveSetAt(i, x, y, tab, pos = drivePlaced(tab)) {
+  const p = DX.p[i], o = pos.find(q => q.id === p.ref) || { x: 0, y: 0 }, d = Math.hypot(x - o.x, y - o.y);
+  p.dist = +d.toFixed(4);
+  p.ang = d > 1e-9 ? +(Math.atan2(y - o.y, x - o.x) * 180 / Math.PI).toFixed(4) : 0;
+}
+/* the pulleys pulley i can be dimensioned from: not itself, nor one that is (through others) dimensioned from it */
+function refOptions(i) {
+  const id = DX.p[i].id;
+  const carried = q => {
+    for (let n = 0, c = q; c && n <= DX.p.length; n++) {
+      if (c.id === id) return true;
+      if (DX.roles.includes(c.id)) return false;
+      c = DX.p.find(x => x.id === c.ref);
+    }
+    return false;
+  };
+  return DX.p.filter((q, j) => j !== i && !carried(q));
+}
+/* the pulley of `opts` whose centre is closest to (x, y) */
+const nearestOf = (opts, pos, x, y) => opts.reduce((a, q) => {
+  const P = pos.find(r => r.id === q.id), A = a && pos.find(r => r.id === a.id);
+  return !a || Math.hypot(P.x - x, P.y - y) < Math.hypot(A.x - x, A.y - y) ? q : a;
+}, null);
 /* the answer for a calculator tab (same requests and answers as CALC; kept for the warnings) */
 function driveCalc(tab, q) {
-  const path = tab === 'b' ? 'belt/length' : 'belt/c2c', req = { ...q, pulleys: drivePulleys(tab) }, key = `${path}|${UNIT}|${JSON.stringify(req)}`;
+  const path = tab === 'b' ? 'belt/length' : 'belt/c2c', o = $(`${tab}-svg`)._last;
+  const req = { ...q, pulleys: drivePulleys(tab), near: tab === 'a' && o && Number.isFinite(o.g.C) ? +o.g.C.toFixed(3) : undefined };   // keep to the C shown now
+  const key = `${path}|${UNIT}|${JSON.stringify(req)}`;
   let r = DRV.cache.get(key);
   if (!r) {
     r = DRIVE_CALC[path](req);
@@ -64,7 +91,7 @@ function plistRows(where) {
   const bad = driveBad(where), n = DX.p.length;
   return `<ol class="pl-list" aria-label="Pulleys in belt order">${DX.p.map((p, i) => {
     const k = roleOf(i), sel = i === DX.cur, isBad = bad && bad.bad.pulleys.has(i), N = teethOf(where, i);
-    const at = k === 0 ? 'origin' : k === 1 ? 'at C2C' : `${fl(p.x, 1)}, ${fl(p.y, 1)}`;
+    const ref = DX.p.find(q => q.id === p.ref), at = k === 0 ? 'origin' : k === 1 ? 'at C2C' : `${fl(p.dist, 2)} from ${ref ? ref.name : 'origin'}`;
     return `<li class="pl-row${sel ? ' sel' : ''}${isBad ? ' bad' : ''}"${isBad ? ` title="${escT(plain(driveWhy(bad)))}"` : ''}>`
       + `<button type="button" class="pl-pick" data-plpick="${i}" aria-pressed="${sel}"><b>${p.name}</b><span class="pl-n">${Number.isFinite(N) ? N : '—'}T</span><em>${at}</em></button>`
       + `<button type="button" class="pl-side${p.side < 0 ? ' back' : ''}" data-plside="${i}" aria-pressed="${p.side < 0}" title="${p.side < 0 ? 'Backside idler: the belt back runs on it. Click for a toothed pulley.' : 'Toothed pulley: the belt teeth wrap it. Click for a backside idler.'}">${p.side < 0 ? 'back' : 'teeth'}</button>`
@@ -79,15 +106,19 @@ function plistEd(where) {
   if (k >= 0) {
     return [`<p class="hint sans pl-note">${p.name} ${k ? `sits on the X axis at the C2C from ${DX.p[roleIdx(0)].name}` : 'sits at the origin'} — its teeth are set above. Added pulleys go anywhere: drag them in the layout or type a position.</p>`, `r${p.id}`];
   }
-  const id = `${where}-pl`, v = x => +toU(x).toFixed(dU(2));
+  const id = `${where}-pl`, v = (x, d = 3) => +toU(x).toFixed(dU(d)), me = drivePlaced(where)[i], ref = DX.p.find(q => q.id === p.ref);
+  const opts = refOptions(i).map(q => `<option value="${q.id}"${q.id === p.ref ? ' selected' : ''}>${q.name}</option>`).join('');
   return [`<div class="pl-ed-in">
       <div class="field"><label for="${id}-n">${p.name} <span class="u">teeth</span></label><div class="stepper"><button type="button" data-step="-1" data-for="${id}-n" aria-label="Fewer teeth">−</button><input id="${id}-n" data-pled="n" type="number" inputmode="numeric" min="4" step="1" value="${teethOf(where, i)}" data-snap><button type="button" data-step="1" data-for="${id}-n" aria-label="More teeth">+</button></div></div>
-      <div class="field"><label for="${id}-x">X <span class="u">${U()}</span></label><input id="${id}-x" class="inp" data-pled="x" type="number" inputmode="decimal" step="any" value="${v(p.x)}"></div>
-      <div class="field"><label for="${id}-y">Y <span class="u">${U()}</span></label><input id="${id}-y" class="inp" data-pled="y" type="number" inputmode="decimal" step="any" value="${v(p.y)}"></div>
+      <div class="field"><label for="${id}-ref">From</label><select id="${id}-ref" class="inp" data-pled="ref" aria-label="Pulley ${p.name} is dimensioned from">${opts}</select></div>
+      <div class="field"><label for="${id}-dist">C2C <span class="u">${U()}</span></label><input id="${id}-dist" class="inp" data-pled="dist" type="number" inputmode="decimal" min="0" step="any" value="${v(p.dist)}"></div>
+      <div class="field"><label for="${id}-ang">Angle <span class="u">° from +X</span></label><input id="${id}-ang" class="inp" data-pled="ang" type="number" inputmode="decimal" step="any" value="${+(+p.ang).toFixed(3)}"></div>
+      <div class="field"><label for="${id}-x">X <span class="u">${U()}</span></label><input id="${id}-x" class="inp" data-pled="x" type="number" inputmode="decimal" step="any" value="${v(me.x, 2)}"></div>
+      <div class="field"><label for="${id}-y">Y <span class="u">${U()}</span></label><input id="${id}-y" class="inp" data-pled="y" type="number" inputmode="decimal" step="any" value="${v(me.y, 2)}"></div>
     </div>
-    <span class="hint sans">From the centre of ${DX.p[roleIdx(0)].name}, +Y up — or drag ${p.name} in the layout below.</span>
-    ${where === 'b' ? `<div class="pl-fit"><button type="button" class="btn sm" data-plfit>Fit to stock belt</button><span class="hint sans">Slides ${p.name} straight out from the middle of the drive until the belt is the nearest size on the stock list.</span></div>` : ''}`,
-    `f${p.id}|${UNIT}`];
+    <span class="hint sans">C2C and angle from the centre of ${ref ? ref.name : DX.p[roleIdx(0)].name} (0° = +X, counter-clockwise) — ${p.name} moves with it. X / Y are from ${DX.p[roleIdx(0)].name}, +Y up. Or drag ${p.name}, or click its dimension in the layout and type.</span>
+    ${where === 'b' ? `<div class="pl-fit"><button type="button" class="btn sm" data-plfit>Fit C2C to stock belt</button><span class="hint sans">Changes ${p.name}'s C2C from ${ref ? ref.name : 'its pulley'} (same angle) until the belt is the nearest size on the stock list.</span></div>` : ''}`,
+    `f${p.id}|${p.ref}|${UNIT}`];
 }
 function plistFoot(where, show) {
   const add = `<button type="button" class="btn sm icon pl-add" data-pladd${DX.p.length >= DRIVE_MAX ? ' disabled' : ''}>${ICON_PLUS}Add pulley</button>`;
@@ -95,10 +126,12 @@ function plistFoot(where, show) {
     : where === 'd' ? 'Pick a pulley to edit it below · the belt runs round them in list order.' : 'The belt runs round the pulleys in list order.'}</span>`;
 }
 function plSet(el, html, key = '') {
-  if (key && el.dataset.key === key && el.contains(document.activeElement)) return;   // being typed in
+  const a = document.activeElement, focus = el.contains(a) && a.id;
+  if (key && el.dataset.key === key && focus) return;                   // being typed in
   if (el._html !== html) { el.innerHTML = html; el._html = html; }
   el.dataset.key = key;
   el.hidden = !html;
+  if (focus && document.activeElement !== a) { const n = document.getElementById(focus); if (n) n.focus(); }
 }
 function plistRender() {
   DRV.soon = false;
@@ -178,19 +211,23 @@ function driveAdd() {
   np.v['d-n'] = String(Number.isFinite(N) && N >= 4 ? N : 20);
   np.id = `p${Math.max(0, ...DX.p.map(p => parseInt(p.id.slice(1), 10) || 0)) + 1}`;
   for (let j = 1; ; j++) if (!DX.p.some(p => p.name === `P${j}`)) { np.name = `P${j}`; break; }
-  [np.x, np.y] = driveSpot({ N: +np.v['d-n'], side: np.side });
+  const [x, y] = driveSpot({ N: +np.v['d-n'], side: np.side }), pos = drivePlaced(tab);
   DX.p.push(np);
   DX.cur = DX.p.length - 1;
+  np.ref = nearestOf(DX.p.slice(0, -1), pos, x, y).id;      // dimensioned from the closest pulley, and moves with it
+  delete np.x; delete np.y;
+  driveSetAt(DX.cur, x, y, tab, pos);
   driveChanged();
   toast(`${np.name} added — drag it in the layout, or set its teeth, position and side in the list.`);
 }
-/* removing P1 or P2's stand-in hands its role to the next pulley in belt order; the drive is turned so the two role
-   pulleys sit on the X axis again, and nothing else moves */
+/* removing a pulley leaves every other one where it is: the ones dimensioned from it switch to its own reference (or the
+   nearest pulley). Removing P1 or P2's stand-in hands its role to the next pulley in belt order, and the drive is turned
+   so the two role pulleys sit on the X axis again. */
 function driveDelete(i) {
   if (DX.p.length <= 2) return;
   readForm();
-  const tab = lastCalc === 'length' ? 'b' : 'a', pos = drivePlaced(tab), gone = DX.p[i], k = roleOf(i);
-  const keep = DX.cur === i ? null : DX.p[DX.cur].id;
+  const tab = lastCalc === 'length' ? 'b' : 'a', gone = DX.p[i], k = roleOf(i), keep = DX.cur === i ? null : DX.p[DX.cur].id;
+  let pos = drivePlaced(tab);
   if (k >= 0) {
     const n = DX.p.length, other = DX.roles[1 - k];
     let heir = null;
@@ -198,46 +235,65 @@ function driveDelete(i) {
     const hn = Math.round(parseFloat(heir.v['d-n']));
     ['a', 'b'].forEach(w => { $(ROLE_N[w][k]).value = hn; });
     DX.roles[k] = heir.id;
-    const at = id => pos[DX.p.findIndex(p => p.id === id)], o = at(DX.roles[0]), t = at(DX.roles[1]);
+    const at = id => pos.find(p => p.id === id), o = at(DX.roles[0]), t = at(DX.roles[1]);
     const ang = Math.atan2(t.y - o.y, t.x - o.x), c = Math.cos(ang), s = Math.sin(ang);
-    DX.p.forEach((p, j) => {
-      const dx = pos[j].x - o.x, dy = pos[j].y - o.y;
-      p.x = +(dx * c + dy * s).toFixed(3); p.y = +(-dx * s + dy * c).toFixed(3);
-    });
+    pos = pos.map(p => { const dx = p.x - o.x, dy = p.y - o.y; return { ...p, x: dx * c + dy * s, y: -dx * s + dy * c }; });
     $('b-c').value = +Math.hypot(t.x - o.x, t.y - o.y).toFixed(3);
   }
   DX.p.splice(i, 1);
+  pos = pos.filter(p => p.id !== gone.id);
+  DX.p.forEach(p => { if (p.ref === gone.id) p.ref = DX.p.some(q => q.id === gone.ref) ? gone.ref : null; });
+  DX.p.forEach((p, j) => {
+    if (roleOf(j) >= 0) return;
+    if (!DX.p.some(q => q.id === p.ref && q !== p) || !refOptions(j).some(q => q.id === p.ref)) { const me = pos.find(q => q.id === p.id); p.ref = nearestOf(refOptions(j), pos, me.x, me.y).id; }
+  });
+  DX.p.forEach((p, j) => { if (roleOf(j) < 0) { const me = pos.find(q => q.id === p.id); driveSetAt(j, me.x, me.y, tab, pos); } });
   DX.cur = keep ? DX.p.findIndex(p => p.id === keep) : Math.min(i, DX.p.length - 1);
   driveChanged();
   toast(`${gone.name} removed.`);
 }
 function driveEdit(el) {
-  const p = DX.p[DX.cur], v = num(el);
-  if (!p || roleOf(DX.cur) >= 0 || !Number.isFinite(v)) return;
-  if (el.dataset.pled === 'n') { p.v['d-n'] = String(Math.round(v)); $('d-n').value = Math.round(v); }
-  else p[el.dataset.pled] = +(v * (UNIT === 'in' ? IN : 1)).toFixed(4);
+  const i = DX.cur, p = DX.p[i], k = el.dataset.pled, tab = el.id[0] === 'b' ? 'b' : 'a', mm = UNIT === 'in' ? IN : 1;
+  if (!p || roleOf(i) >= 0) return;
+  if (k === 'ref') {                                  // another pulley to measure from: stays where it is
+    const me = drivePlaced(tab)[i];
+    p.ref = el.value;
+    driveSetAt(i, me.x, me.y, tab);
+  } else {
+    const v = num(el);
+    if (!Number.isFinite(v)) return;
+    if (k === 'n') { p.v['d-n'] = String(Math.round(v)); $('d-n').value = Math.round(v); }
+    else if (k === 'dist') { if (v < 0) return; p.dist = +(v * mm).toFixed(4); }
+    else if (k === 'ang') p.ang = v;
+    else { const me = drivePlaced(tab)[i]; driveSetAt(i, k === 'x' ? v * mm : me.x, k === 'y' ? v * mm : me.y, tab); }
+  }
   driveChanged();
 }
-/* Belt length tab: move the selected added pulley straight out from the middle of the drive (bisection) until the belt is
-   the stock length nearest to it now */
+/* type a C2C on the layout, like a sketch dimension: pulley i's C2C from its ref (mm) */
+function driveSetDist(i, mm) {
+  const p = DX.p[i];
+  if (!p || roleOf(i) >= 0 || !(mm >= 0)) return;
+  readForm();
+  p.dist = +mm.toFixed(4);
+  driveChanged();
+}
+/* Belt length tab: change the selected added pulley's C2C from its ref (bisection, same angle) until the belt is the stock
+   length nearest to it now */
 function driveFitStock() {
   const i = DX.cur, p = DX.p[i], belt = BELTS[B.type], Ct = num($('b-c'));
   if (roleOf(i) >= 0 || !(Ct > 0)) return;
-  const ps = drivePulleys('b').map(q => q.role === 1 ? { ...q, x: 0, y: 0 } : q.role === 2 ? { ...q, x: Ct, y: 0 } : q), g = driveSolve(belt, ps);
+  const ps = drivePulleys('b'), g = driveAt(belt, ps, Ct);
   if (!g.valid) { toast('Set up a drive the belt can go round first.'); return; }
   const list = stockList(B.type).filter(L => Math.abs(L / belt.pitch - Math.round(L / belt.pitch)) < 1e-6);
   if (!list.length) { toast(`The ${belt.label} stock list is empty.`); return; }
   const Lt = list.reduce((a, v) => Math.abs(v - g.L) < Math.abs(a - g.L) ? v : a);
-  const cx = ps.reduce((s, q) => s + q.x, 0) / ps.length, cy = ps.reduce((s, q) => s + q.y, 0) / ps.length;
-  let dx = ps[i].x - cx, dy = ps[i].y - cy, d = Math.hypot(dx, dy);
-  if (d < 1e-6) { dx = 0; dy = 1; d = 1; }
-  const hit = driveFit(belt, ps, i, [dx / d, dy / d], Lt);
-  if (!hit) { toast(`${p.name} can't reach the ${lenR(Lt)} stock belt along that line — move it by hand.`); return; }
-  const moved = Math.hypot(hit.x - p.x, hit.y - p.y);
-  p.x = +hit.x.toFixed(4); p.y = +hit.y.toFixed(4);
+  const hit = driveFitDist(belt, ps, i, Ct, Lt), ref = DX.p.find(q => q.id === p.ref);
+  if (!hit) { toast(`No C2C for ${p.name} makes the belt ${lenR(Lt)} — move it by hand.`); return; }
+  const was = p.dist;
+  p.dist = +hit.dist.toFixed(6);
   B.selL = Lt; B.flash = true;
   driveChanged();
-  toast(`${p.name} moved ${len(moved, 2)} — the belt is now the ${Math.round(Lt / belt.pitch)}T (${lenR(Lt)}) stock size.`);
+  toast(`${p.name} C2C from ${ref ? ref.name : 'P1'}: ${len(was, 3)} → ${len(p.dist, 3)} — the belt is now the ${Math.round(Lt / belt.pitch)}T (${lenR(Lt)}) stock size.`);
 }
 
 /* ---------------- results ---------------- */
@@ -386,11 +442,31 @@ function idlerBody(belt, N, j) {
   bodyCache.set(key, html);
   return html;
 }
+/* C2C dimensions like a sketch's: from each added pulley's ref to it, set off to the outside of the drive.
+   ps = [{ id, x, y, r, role, ref }] (model coordinates, +Y up) → [{ i, j, A, B, d, u, n, S, E, t }] */
+function driveDims(ps, T, fs) {
+  const at = new Map(ps.map((p, i) => [p.id, i])), out = [];
+  const cx = ps.reduce((s, p) => s + p.x, 0) / ps.length, cy = ps.reduce((s, p) => s + p.y, 0) / ps.length;
+  ps.forEach((B, i) => {
+    if (B.role || !at.has(B.ref)) return;
+    const j = at.get(B.ref), A = ps[j], dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy);
+    if (!(d > 1e-6)) return;
+    const u = [dx / d, dy / d];
+    let n = [-u[1], u[0]];
+    if (((A.x + B.x) / 2 - cx) * n[0] + ((A.y + B.y) / 2 - cy) * n[1] < 0) n = [-n[0], -n[1]];
+    const off = Math.max(A.r, B.r) + T + fs * 1.3, S = [A.x + n[0] * off, A.y + n[1] * off], E = [B.x + n[0] * off, B.y + n[1] * off];
+    out.push({ i, j, A, B, d, u, n, off, S, E, t: [(S[0] + E[0]) / 2 + n[0] * fs * 0.8, (S[1] + E[1]) / 2 + n[1] * fs * 0.8] });
+  });
+  return out;
+}
 function driveFitView(svg, belt, ps) {
   const T = beltThick(belt), cw = svg.clientWidth || 800, ch = svg.clientHeight || 320;
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;           // screen coordinates (y down)
-  ps.forEach(p => { const e = p.r + T; x0 = Math.min(x0, p.x - e); x1 = Math.max(x1, p.x + e); y0 = Math.min(y0, -p.y - e); y1 = Math.max(y1, -p.y + e); });
-  const scale = Math.max(1e-6, Math.min((cw - 40) / (x1 - x0), (ch - 80) / (y1 - y0))), fs = 12.5 / scale;
+  const grow = (x, y, e) => { x0 = Math.min(x0, x - e); x1 = Math.max(x1, x + e); y0 = Math.min(y0, -y - e); y1 = Math.max(y1, -y + e); };
+  ps.forEach(p => grow(p.x, p.y, p.r + T));
+  const fit = () => Math.max(1e-6, Math.min((cw - 40) / (x1 - x0), (ch - 80) / (y1 - y0)));
+  driveDims(ps, T, 12.5 / fit()).forEach(m => { const fs0 = 12.5 / fit(); grow(m.S[0], m.S[1], fs0 * 0.6); grow(m.E[0], m.E[1], fs0 * 0.6); grow(m.t[0], m.t[1], fs0 * 2.6); });
+  const scale = fit(), fs = 12.5 / scale;
   let l = x0 - fs * 1.2, r = x1 + fs * 1.2;                                    // room for the labels over the pulleys
   ps.forEach(p => { l = Math.min(l, p.x - fs * 5.8); r = Math.max(r, p.x + fs * 5.8); });
   const top = y0 - fs * 2.3;
@@ -404,7 +480,7 @@ function drawDriveLayout(svg, o) {
   const sc = svg._sc, { belt, g } = o, prev = sc.tgt;
   const labelC = Number.isFinite(o.labelC) ? o.labelC : g.C, ids = g.ps.map(p => `${p.id}:${p.side}`).join(',');
   if (g.valid) sc.good = g;
-  const tgt = { belt, g, labelC, ids, ps: g.ps.map(p => ({ id: p.id, x: p.x, y: p.y, r: p.r })) };
+  const tgt = { belt, g, labelC, ids, ps: g.ps.map(p => ({ id: p.id, x: p.x, y: p.y, r: p.r, role: p.role, ref: p.ref })) };
   const changed = sc.refit || !prev || prev.belt !== belt || prev.ids !== ids || Math.abs(prev.labelC - labelC) > 1e-9
     || tgt.ps.some((p, i) => Math.abs(p.x - prev.ps[i].x) > 1e-9 || Math.abs(p.y - prev.ps[i].y) > 1e-9 || Math.abs(p.r - prev.ps[i].r) > 1e-9);
   const dragging = DRV.drag && DRV.drag.svg === svg, visible = svg.clientWidth > 0 && !svg.closest('.panel').hidden;
@@ -472,6 +548,23 @@ function driveSceneBuild(svg) {
     const S = g.spans[k], A = g.q[k], B = g.q[(k + 1) % g.n], a = S ? S.a : [c.ps[A.i].x, c.ps[A.i].y], b = S ? S.b : [c.ps[B.i].x, c.ps[B.i].y];
     marks += `<line x1="${Q3(a[0])}" y1="${Q3(-a[1])}" x2="${Q3(b[0])}" y2="${Q3(-b[1])}" class="dv-span-bad"${S ? '' : ' stroke-dasharray="4 3"'} ${NS} stroke-width="2"/>`;
   });
+  // each added pulley's C2C from its ref, like a sketch dimension: click the number to type a new one
+  const sv = ([x, y]) => `${Q3(x)} ${Q3(-y)}`, ah = fs * 0.6;
+  driveDims(P.map((cp, i) => ({ ...cp, role: g.ps[i].role, ref: g.ps[i].ref })), T, fs).forEach(m => {
+    const on = g.ps[m.i].id === sel ? ' dv-dsel' : '', n = m.n, u = m.u;
+    const at = (Q, k) => [Q.x + n[0] * k, Q.y + n[1] * k], along = (Q, k) => [Q[0] + u[0] * k, Q[1] + u[1] * k];
+    const tip = (Q, s) => {                         // arrow head on the dimension line, its tip at Q
+      const b = along(Q, s * ah), w = [n[0] * ah * 0.38, n[1] * ah * 0.38];
+      return `<path d="M${sv(Q)}L${sv([b[0] + w[0], b[1] + w[1]])}L${sv([b[0] - w[0], b[1] - w[1]])}Z" class="arrow${on}"/>`;
+    };
+    let rot = Math.atan2(-u[1], u[0]) * 180 / Math.PI;
+    if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
+    const [tx, ty] = sv(m.t).split(' ');
+    marks += `<path d="M${sv(at(m.A, m.A.r + T + fs * 0.3))}L${sv(at(m.A, m.off + fs * 0.5))}M${sv(at(m.B, m.B.r + T + fs * 0.3))}L${sv(at(m.B, m.off + fs * 0.5))}" class="ext${on}" ${NS} stroke-width="1"/>`
+      + `<path d="M${sv(along(m.S, ah))}L${sv(along(m.E, -ah))}" class="dim${on}" ${NS} stroke-width="1.2"/>` + tip(m.S, 1) + tip(m.E, -1)
+      + `<text x="${tx}" y="${ty}" transform="rotate(${Q3(rot)} ${tx} ${ty})" text-anchor="middle" dominant-baseline="middle" font-size="${Q3(fs)}" class="dimt dv-dimt${on}" data-dimpi="${m.i}">`
+      + `<title>${g.ps[m.j].name} → ${g.ps[m.i].name} C2C · click to type a new one</title>${fl(m.d, 3)}</text>`;
+  });
   // the C2C the calculators solve, under the drawing, between the two role pulleys (both on the X axis)
   const i1 = g.ps.findIndex(p => p.role === 1), i2 = g.ps.findIndex(p => p.role === 2);
   if (i1 >= 0 && i2 >= 0) {
@@ -481,7 +574,8 @@ function driveSceneBuild(svg) {
       + `<line x1="${Q3(xa + sg * a)}" x2="${Q3(xb - sg * a)}" y1="${Q3(dy)}" y2="${Q3(dy)}" class="dim" ${NS} stroke-width="1.2"/>`
       + `<path d="M${Q3(xa)},${Q3(dy)} l${Q3(sg * a)},${Q3(-a * 0.38)} v${Q3(a * 0.76)} Z" class="arrow"/>`
       + `<path d="M${Q3(xb)},${Q3(dy)} l${Q3(-sg * a)},${Q3(-a * 0.38)} v${Q3(a * 0.76)} Z" class="arrow"/>`
-      + `<text x="${Q3((xa + xb) / 2)}" y="${Q3(dy + fs * 1.45)}" text-anchor="middle" font-size="${Q3(fs)}" class="dimt">C2C ${len(c.labelC, 3)} · ${g.ps[i1].name}–${g.ps[i2].name}</text>`;
+      + `<text x="${Q3((xa + xb) / 2)}" y="${Q3(dy + fs * 1.45)}" text-anchor="middle" font-size="${Q3(fs)}" class="dimt dv-dimt" data-dimc2c>`
+      + `<title>${g.ps[i1].name} → ${g.ps[i2].name} C2C · click to type a new one</title>C2C ${len(c.labelC, 3)} · ${g.ps[i1].name}–${g.ps[i2].name}</text>`;
   }
   svg.innerHTML = bodies + beltEl + marks;
   sc.els = { spin: svg.querySelectorAll('.spin'), belt: svg.querySelector('.belt-solid'), over: svg.querySelector('.belt-over'), teeth: svg.querySelector('.belt-teeth') };
@@ -536,10 +630,54 @@ function driveFrame(svg, ts, adv) {
   return tweening;
 }
 
+/* typing on the drawing: a box over the clicked dimension (box = its screen rect), mm → apply(mm) on Enter or leaving it,
+   Esc keeps the old value */
+function dimEdit(box, mm, label, apply) {
+  const old = document.querySelector('.dv-dimin');
+  if (old) old.blur();
+  const inp = document.createElement('input');
+  Object.assign(inp, { type: 'number', step: 'any', min: '0', inputMode: 'decimal', className: 'dv-dimin', value: +toU(mm).toFixed(dU(3)) });
+  inp.setAttribute('aria-label', `${label} in ${U()}`);
+  inp.style.left = `${box.left + box.width / 2}px`; inp.style.top = `${box.top + box.height / 2}px`;
+  document.body.appendChild(inp);
+  inp.focus(); inp.select();
+  let open = true;
+  const done = ok => {
+    if (!open) return;
+    open = false;
+    window.removeEventListener('scroll', onScroll);
+    const v = num(inp);
+    inp.remove();
+    if (ok && Number.isFinite(v) && v >= 0) apply(v * (UNIT === 'in' ? IN : 1));
+  };
+  const onScroll = () => done(true);
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); done(false); }
+  });
+  inp.addEventListener('blur', () => done(true));
+  window.addEventListener('scroll', onScroll, { passive: true });
+}
+
 /* dragging: click a pulley to select it; added pulleys can be dragged, with the layout following live */
 const svgPoint = (svg, e) => { const q = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()); return [q.x, -q.y]; };
 function driveDragWire(svg) {
   const tab = svg.id[0], render = () => (tab === 'b' ? renderB(true) : renderA());
+  svg.addEventListener('click', e => {             // a C2C dimension: type the value
+    const el = e.target.closest('[data-dimpi], [data-dimc2c]'), sc = svg._sc;
+    if (!el || !sc || !sc.drive) return;
+    const box = el.getBoundingClientRect(), label = (el.querySelector('title') || el).textContent.replace(/ ·.*/, '');
+    if (el.dataset.dimpi != null) {
+      const i = +el.dataset.dimpi;
+      if (!DX.p[i]) return;
+      if (i !== DX.cur) drivePick(i);
+      dimEdit(box, DX.p[i].dist, label, v => driveSetDist(i, v));
+    } else if (tab === 'b') {
+      dimEdit(box, num($('b-c')), label, v => { const c = $('b-c'); c.value = +v.toFixed(4); c.dispatchEvent(new Event('input', { bubbles: true })); });
+    } else {
+      toast('On this tab the C2C comes from the belt length — type it on the Belt length tab, or change the belt.');
+    }
+  });
   svg.addEventListener('pointerdown', e => {
     const sc = svg._sc, el = e.target.closest('[data-dpi]');
     if (!sc || !sc.drive || !el || e.button > 0) return;
@@ -548,8 +686,11 @@ function driveDragWire(svg) {
     e.preventDefault();
     if (i !== DX.cur) drivePick(i);
     if (roleOf(i) >= 0) return;                     // the role pulleys sit where the calculators put them
-    const m = svgPoint(svg, e);
-    DRV.drag = { svg, id: p.id, dx: p.x - m[0], dy: p.y - m[1], moved: false };
+    const m = svgPoint(svg, e), me = drivePlaced(tab)[i];
+    // while dragged it sits under the pointer (on the Center distance tab P2 still slides to keep the belt length);
+    // let go, and it is dimensioned from its pulley again, where it is
+    DRV.drag = { svg, id: p.id, ref: p.ref, dx: me.x - m[0], dy: me.y - m[1], moved: false };
+    p.ref = null; p.x = me.x; p.y = me.y;
     svg.setPointerCapture(e.pointerId);
     svg.classList.add('dragging');
   });
@@ -558,7 +699,7 @@ function driveDragWire(svg) {
     if (!d || d.svg !== svg) return;
     const m = svgPoint(svg, e), p = DX.p.find(q => q.id === d.id);
     if (!p) return;
-    p.x = Math.round((m[0] + d.dx) * 100) / 100; p.y = Math.round((m[1] + d.dy) * 100) / 100;
+    p.x = Math.round((m[0] + d.dx) * 100) / 100; p.y = Math.round((m[1] + d.dy) * 100) / 100;   // the ones dimensioned from it follow
     d.moved = true;
     render();
     plistSoon();
@@ -568,6 +709,12 @@ function driveDragWire(svg) {
     if (!d || d.svg !== svg) return;
     DRV.drag = null;
     svg.classList.remove('dragging');
+    const i = DX.p.findIndex(q => q.id === d.id), p = DX.p[i];
+    if (p) {
+      const at = [p.x, p.y];
+      p.ref = d.ref; delete p.x; delete p.y;
+      if (d.moved) driveSetAt(i, at[0], at[1], tab);
+    }
     if (!d.moved) return;
     if (svg._sc) svg._sc.refit = true;              // the view glides to fit the new layout
     driveChanged();
@@ -593,5 +740,6 @@ function driveInit() {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-plpick]')) { e.preventDefault(); drivePick(+e.target.dataset.plpick); }
   });
   document.addEventListener('input', e => { const el = e.target.closest('[data-pled]'); if (el) driveEdit(el); });
+  document.addEventListener('focusout', e => { if (e.target.closest('.pl-ed')) setTimeout(plistRender); });   // the boxes not typed in catch up
   ['a-svg', 'b-svg'].forEach(id => driveDragWire($(id)));
 }

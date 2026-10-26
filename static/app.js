@@ -423,11 +423,12 @@ function pushLayout(kind) {
   if (el.value !== $('d-n').value) { el.value = $('d-n').value; el.dispatchEvent(new Event('input', { bubbles: true })); }
 }
 /* each pulley keeps its own form values; the form always shows pulley DX.cur. DX.p is the drive, in belt order:
-   { id, name, side (+1 teeth wrap it | −1 backside idler), x, y (mm from the role 1 pulley; added pulleys only), … } */
+   { id, name, side (+1 teeth wrap it | −1 backside idler), ref, dist, ang (added pulleys only: C2C in mm and angle in
+   degrees from the centre of pulley `ref`, which they move with), … } */
 const P_FIELDS = ['d-n', 'd-bore', 'd-flat', 'd-clear', 'd-hn', 'd-hd', 'd-hp', 'd-hr', 'd-fit', 'd-flh'];
 const P_CHECKS = ['d-flange', 'd-pitch'];
 function newPulley(n, k = 1) {
-  return { id: `p${k}`, name: `P${k}`, side: 1, x: 0, y: 0, bore: 'round', borePre: 'custom', holePre: 'none',
+  return { id: `p${k}`, name: `P${k}`, side: 1, ref: null, dist: 0, ang: 0, bore: 'round', borePre: 'custom', holePre: 'none',
     v: { 'd-n': String(n), 'd-bore': '5', 'd-flat': '5.5', 'd-clear': '0', 'd-hn': '4', 'd-hd': '4.3', 'd-hp': '22.627', 'd-hr': '45', 'd-fit': '0', 'd-flh': '4' },
     c: { 'd-flange': false, 'd-pitch': false } };
 }
@@ -2343,7 +2344,8 @@ function cleanPulley(p, n, k) {                       // k: the number it gets w
   Object.keys(v).forEach(k => { if (p.v && typeof p.v[k] === 'string') v[k] = p.v[k]; });
   Object.keys(c).forEach(k => { if (p.c && k in p.c) c[k] = !!p.c[k]; });
   const id = typeof p.id === 'string' && /^p\d{1,3}$/.test(p.id) ? p.id : d.id, name = typeof p.name === 'string' && /^P\d{1,3}$/.test(p.name) ? p.name : d.name;
-  return { id, name, side: p.side === -1 ? -1 : 1, x: at(p.x), y: at(p.y),
+  return { id, name, side: p.side === -1 ? -1 : 1, ref: typeof p.ref === 'string' && /^p\d{1,3}$/.test(p.ref) ? p.ref : null,
+    dist: Math.max(0, at(p.dist)), ang: at(p.ang), x: at(p.x), y: at(p.y),         // x / y: positions saved before C2C dimensions
     bore: pick(p.bore, ['round', 'hex', 'square', 'rex', 'd', 'dd'], 'round'), borePre: pick(p.borePre, ['none', 'rev', 'rex', 'gbd', 'b14', 'custom'], 'custom'),
     holePre: pick(p.holePre, ['none', 'sonic', 'servo', 'custom'], 'none'), v, c };
 }
@@ -2384,6 +2386,12 @@ function restoreSettings() {
         DX.p = uniq('id') && uniq('name') ? ps : ps.map((p, j) => ({ ...p, id: `p${j + 1}`, name: `P${j + 1}` }));
         const r = s.d.roles;
         DX.roles = Array.isArray(r) && r.length === 2 && r[0] !== r[1] && r.every(id => DX.p.some(p => p.id === id)) ? r.slice() : [DX.p[0].id, DX.p[1].id];
+        DX.p.forEach(p => {                              // an x / y position (older settings): the same place, dimensioned from role 1
+          if (!DX.roles.includes(p.id) && !DX.p.some(q => q.id === p.ref && q !== p)) {
+            p.ref = DX.roles[0]; p.dist = +Math.hypot(p.x, p.y).toFixed(4); p.ang = +(Math.atan2(p.y, p.x) * 180 / Math.PI).toFixed(4);
+          }
+          delete p.x; delete p.y;
+        });
       }
       DX.cur = Number.isInteger(s.d.cur) && s.d.cur >= 0 && s.d.cur < DX.p.length ? s.d.cur : 0;
       DX.flhTouched = !!s.d.flhTouched;

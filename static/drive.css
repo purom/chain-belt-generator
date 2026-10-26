@@ -49,6 +49,12 @@ svg .dv-span-bad{stroke:var(--bad);stroke-linecap:round}
 svg .dv-ghost{opacity:.38}
 svg .p-idler{fill:var(--boss)}
 svg text .pi{fill:var(--info);font-weight:600}
+svg text.dv-dimt{cursor:text}
+svg text.dv-dimt:hover,svg text.dv-dimt.dv-dsel{fill:var(--accent)}
+svg .dim.dv-dsel,svg .ext.dv-dsel{stroke:var(--accent)}
+svg .arrow.dv-dsel{fill:var(--accent)}
+.dv-dimin{position:fixed;z-index:60;transform:translate(-50%,-50%);width:112px;height:34px;padding:0 10px;border:1px solid var(--accent);border-radius:8px;background:var(--panel);color:var(--ink);font:600 15px var(--mono);text-align:center;box-shadow:0 0 0 3px var(--accent-soft),var(--shadow);outline:none}
+.pl-ed select.inp{padding:0 8px;font-size:15px;cursor:pointer}
 svg .dv-pul{cursor:pointer}
 svg .dv-drag{cursor:grab;touch-action:none}
 svg.dragging,svg.dragging .dv-drag{cursor:grabbing}

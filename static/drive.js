@@ -191,10 +191,26 @@ function drivePhase(bo, i) {
   return sg.a0 + sg.dir * (bo.sOff + k * bo.pe - sg.s0) / sg.r - Math.PI / 2;
 }
 
-/* ---- the calculators' drive: role 1 sits at the origin, role 2 on +X at the centre distance C, the others where they
-   were put (x, y in mm from role 1, +Y up) ---- */
+/* ---- the calculators' drive: role 1 sits at the origin, role 2 on +X at the centre distance C. Every other pulley is
+   dimensioned like a sketch: its C2C `dist` (mm) and angle `ang` (degrees, CCW from +X) from the centre of the pulley
+   `ref`, so it moves along with that one. A pulley without a ref stays at its x / y (mm from role 1, +Y up). ---- */
+function drivePlace(ps, C) {
+  const out = ps.map(p => ({ ...p })), byId = new Map(out.map(p => [p.id, p])), done = new Set();
+  out.forEach(p => {
+    if (p.role === 1) { p.x = 0; p.y = 0; done.add(p); }
+    else if (p.role === 2) { p.x = C; p.y = 0; done.add(p); }
+    else if (p.ref == null) done.add(p);
+  });
+  const put = (p, o) => { const a = (+p.ang || 0) * Math.PI / 180, d = +p.dist || 0; p.x = o.x + d * Math.cos(a); p.y = o.y + d * Math.sin(a); done.add(p); };
+  for (let pass = 0, more = true; more && pass < out.length; pass++) {
+    more = false;
+    out.forEach(p => { const o = byId.get(p.ref); if (!done.has(p) && o && done.has(o)) { put(p, o); more = true; } });
+  }
+  out.forEach(p => { if (!done.has(p)) put(p, { x: 0, y: 0 }); });   // a missing or circular reference: from role 1
+  return out;
+}
 function driveAt(belt, ps, C) {
-  const g = driveSolve(belt, ps.map(p => p.role === 1 ? { ...p, x: 0, y: 0 } : p.role === 2 ? { ...p, x: C, y: 0 } : p));
+  const g = driveSolve(belt, drivePlace(ps, C));
   const p1 = g.ps.find(p => p.role === 1), p2 = g.ps.find(p => p.role === 2);
   return Object.assign(g, { C, r1: p1.r, r2: p2.r, pd1: 2 * p1.r, pd2: 2 * p2.r });
 }
@@ -220,23 +236,28 @@ function driveScan(belt, ps, Lmax) {
   }
   return { lo, hi, pts, edges: edges.reverse() };
 }
-/* the smallest C at which the loop is Lt long */
-function driveFindC(belt, ps, scan, Lt) {
+/* the C at which the loop is Lt long: the one closest to `near` (the C shown now, so editing never jumps to another way
+   of fitting the belt), else the smallest. Added pulleys can make the length rise and fall with C, so there may be several. */
+function driveFindC(belt, ps, scan, Lt, near) {
   const P = scan.pts;
+  let best = null;
   for (let k = 1; k < P.length; k++) {
     const a = P[k - 1], b = P[k];
-    if (!(a.L <= Lt && b.L >= Lt)) continue;
+    if (Number.isNaN(a.L) || Number.isNaN(b.L) || (a.L - Lt) * (b.L - Lt) > 0) continue;
+    const up = b.L >= a.L;
     let lo = a.C, hi = b.C, ok = true;
     for (let i = 0; i < 200 && hi - lo > 1e-10; i++) {
       const m = 0.5 * (lo + hi), g = driveAt(belt, ps, m);
       if (!g.valid) { ok = false; break; }
-      if (g.L < Lt) lo = m; else hi = m;
+      if ((g.L < Lt) === up) lo = m; else hi = m;
     }
     if (!ok) continue;
     const C = 0.5 * (lo + hi), g = driveAt(belt, ps, C);
-    if (g.valid) return { C, g };
+    if (!g.valid || Math.abs(g.L - Lt) > 1e-6) continue;
+    if (!Number.isFinite(near)) return { C, g };
+    if (!best || Math.abs(C - near) < Math.abs(best.C - near)) best = { C, g };
   }
-  return null;
+  return best;
 }
 /* the first C ≥ C0 at which the loop can be built (null if none up to C0 + span) */
 function driveNextValid(belt, ps, C0, span) {
@@ -309,7 +330,7 @@ const DRIVE_CALC = {
       teeth = Math.max(1, Math.round(q.length / p));
       if (Math.abs(q.length / p - teeth) > 1e-6) info.push(['info', `${len(q.length, 2)} isn't a multiple of the ${lenR(p)} pitch — using the nearest real belt, ${teeth}T = ${lenR(teeth * p)}.`]);
     }
-    const L = teeth * p, scan = driveScan(belt, ps, L), hit = driveFindC(belt, ps, scan, L);
+    const L = teeth * p, scan = driveScan(belt, ps, L), hit = driveFindC(belt, ps, scan, L, q.near);
     if (!hit) {
       const valid = scan.pts.filter(x => !Number.isNaN(x.L)), Lmin = Math.min(...valid.map(x => x.L)), e0 = scan.edges.find(e => e.up);
       // what stops it: just short of the shortest loop that works, or (none works) the C with the fewest problems
@@ -339,7 +360,7 @@ const DRIVE_CALC = {
     const off = list.filter(L => Math.abs(L / p - Math.round(L / p)) > 1e-6), whole = list.filter(L => !off.includes(L));
     const tHi = Math.ceil(tx - 1e-9) + 2, Lmax = Math.max(tHi * p, ...whole.filter(L => L > Lx).slice(0, 6));
     const scan = driveScan(belt, ps, Lmax), row = (t, L) => {
-      const h = driveFindC(belt, ps, scan, L);
+      const h = driveFindC(belt, ps, scan, L, Ct);
       return { t, L, C: h ? h.C : NaN, dC: h ? h.C - Ct : NaN, ok: !!h };
     };
     const rows = [];
@@ -364,20 +385,21 @@ const DRIVE_CALC = {
       selected: { ...sel, part_no: partNo(belt, sel.L, q.width || W_DEF[belt.key]) }, geometry: gs, notes: calcNotes(notes) };
   },
 };
-/* "Fit to belt": move pulley i of ps (placed, x / y absolute) along dir until the loop is Lt long; the closest such
-   position to where it is now, or null */
-function driveFit(belt, ps, i, dir, Lt) {
-  const at = t => driveSolve(belt, ps.map((p, j) => j === i ? { ...p, x: p.x + t * dir[0], y: p.y + t * dir[1] } : p));
-  const reach = Math.max(20, Lt / 2), M = 200, pts = [];
-  for (let k = -M; k <= M; k++) { const t = reach * k / M, g = at(t); pts.push({ t, L: g.valid ? g.L : NaN }); }
+/* "Fit to belt": the C2C of pulley i from its reference pulley (same angle; the pulleys dimensioned from it move along)
+   at which the loop is Lt long — the one closest to the C2C it has now — or null */
+function driveFitDist(belt, ps, i, C, Lt) {
+  const at = d => driveAt(belt, ps.map((p, j) => (j === i ? { ...p, dist: d } : p)), C);
+  const d0 = +ps[i].dist || 0, lo0 = Math.max(0, d0 - Math.max(20, Lt / 2)), hi0 = d0 + Math.max(20, Lt / 2), M = 240, pts = [];
+  for (let k = 0; k <= M; k++) { const d = lo0 + (hi0 - lo0) * k / M, g = at(d); pts.push({ d, L: g.valid ? g.L : NaN }); }
   let best = null;
   for (let k = 1; k < pts.length; k++) {
     const a = pts[k - 1], b = pts[k];
     if (Number.isNaN(a.L) || Number.isNaN(b.L) || (a.L - Lt) * (b.L - Lt) > 0) continue;
-    let lo = a.t, hi = b.t, up = b.L > a.L;
+    let lo = a.d, hi = b.d;
+    const up = b.L > a.L;
     for (let n = 0; n < 200 && hi - lo > 1e-10; n++) { const m = 0.5 * (lo + hi), g = at(m); if (!g.valid) break; if ((g.L < Lt) === up) lo = m; else hi = m; }
-    const t = 0.5 * (lo + hi), g = at(t);
-    if (g.valid && Math.abs(g.L - Lt) < 1e-6 && (!best || Math.abs(t) < Math.abs(best.t))) best = { t, x: ps[i].x + t * dir[0], y: ps[i].y + t * dir[1], g };
+    const d = 0.5 * (lo + hi), g = at(d);
+    if (g.valid && Math.abs(g.L - Lt) < 1e-6 && (!best || Math.abs(d - d0) < Math.abs(best.dist - d0))) best = { dist: d, g };
   }
   return best;
 }
