@@ -91,6 +91,7 @@ function fitView(svg, belt, C, r1, r2) {
 /* entry point from the calculators: o = { belt, N1, N2, g, labelC } or null.
    New geometry glides in (centre distance, pulley size, framing) instead of jumping. */
 function drawLayout(svg, o) {
+  if (o && o.g.drive) return drawDriveLayout(svg, o);         // three or more pulleys, or a backside idler (drive-ui.js)
   svg._last = o;
   if (!o) {
     svg._sc = null;
@@ -100,7 +101,7 @@ function drawLayout(svg, o) {
   }
   const { belt, N1, N2, g, labelC } = o;
   const tgt = { belt, N1, N2, labelC, C: g.C, r1: g.r1, r2: g.r2, pd1: g.pd1, pd2: g.pd2 };
-  const sc = svg._sc || (svg._sc = { s: 0, psi: [0, 0] });
+  const sc = svg._sc && !svg._sc.drive ? svg._sc : (svg._sc = { s: 0, psi: [0, 0] });
   const prev = sc.tgt;
   const changed = !prev || prev.belt !== belt || prev.N1 !== N1 || prev.N2 !== N2
     || Math.abs(prev.C - tgt.C) > 1e-9 || Math.abs(prev.labelC - labelC) > 1e-9;
@@ -156,7 +157,7 @@ function sceneBuild(svg) {
     + `<path d="M0,${Q3(dy)} l${Q3(a)},${Q3(-a * 0.38)} v${Q3(a * 0.76)} Z" class="arrow"/>`
     + `<path d="M${Q3(C)},${Q3(dy)} l${Q3(-a)},${Q3(-a * 0.38)} v${Q3(a * 0.76)} Z" class="arrow"/>`
     + `<text x="${Q3(C / 2)}" y="${Q3(dy + fs * 1.45)}" text-anchor="middle" font-size="${Q3(fs)}" class="dimt">C2C ${len(c.labelC, 3)}</text>`;
-  svg.innerHTML = pul(0, r1 / t.r1, t.N1, 0) + pul(C, r2 / t.r2, t.N2, 1) + beltEl
+  svg.innerHTML = pul(0, r1 / t.r1, t.N1, roleIdx(0)) + pul(C, r2 / t.r2, t.N2, roleIdx(1)) + beltEl
     + overlay(0, r1, ext1) + overlay(C, r2, ext2)
     + label(0, ext1, t.N1, t.pd1, 0) + label(C, ext2, t.N2, t.pd2, 1) + dims;
   sc.els = { spin: svg.querySelectorAll('.spin'), belt: svg.querySelector('.belt-solid'), over: svg.querySelector('.belt-over'), teeth: svg.querySelector('.belt-teeth') };
@@ -198,6 +199,7 @@ function frame(ts) {
   for (const id of PAGE === 'chain' ? ['ka-svg', 'kb-svg'] : ['a-svg', 'b-svg']) {
     const svg = $(id), sc = svg._sc;
     if (!sc || !sc.tgt || svg.closest('.panel').hidden) continue;
+    if (sc.drive) { if (driveFrame(svg, ts, ANIM.cur * dt)) tweening = true; continue; }
     if (sc.tween) {
       const k = Math.min(1, Math.max(0, (ts - sc.t0) / TWEEN_MS)), e = ease(k), fr = sc.from, t = sc.tgt;
       sc.cur = sc.chain
@@ -245,7 +247,8 @@ function renderA() {
   const N1 = Math.round(num($('a-n1'))), N2 = Math.round(num($('a-n2')));
   const raw = num($('a-len'));
   const allow = num($('a-allow')) || 0;
-  const res = $('a-results'), svg = $('a-svg'), meta = $('a-viz-meta'), hint = $('a-len-hint');
+  const res = $('a-results'), svg = $('a-svg'), meta = $('a-viz-meta'), hint = $('a-len-hint'), multi = driveMulti();
+  plistSoon();
 
   if (!(N1 >= 4 && N2 >= 4 && N1 <= 1000 && N2 <= 1000) || !(raw > 0)) {
     hint.textContent = '';
@@ -255,12 +258,13 @@ function renderA() {
 
   const teeth = Math.max(1, Math.round(A.unit === 'teeth' ? raw : raw / p)), L = teeth * p;
   rollTo(hint, A.unit === 'teeth' ? `= ${lenR(L)} pitch length · ${partNo(belt, L, beltW(belt.key))}` : `= ${teeth} teeth · ${partNo(belt, L, beltW(belt.key))}`);
-  rollTo(meta, `${belt.label} · ${teeth}T belt (${lenR(L)}) · ${N1}T / ${N2}T · ${beltSize(belt)}`);
+  rollTo(meta, `${belt.label} · ${teeth}T belt (${lenR(L)}) · ${multi ? driveTeethTxt('a') : `${N1}T / ${N2}T`} · ${beltSize(belt)}`);
 
-  const r = apiCalc('a', 'belt/c2c', { type: A.type, n1: N1, n2: N2, length: raw, length_unit: A.unit, allowance: allow, width: beltW(belt.key) }, againFor(renderA, 'c2c'));
+  const q = { type: A.type, n1: N1, n2: N2, length: raw, length_unit: A.unit, allowance: allow, width: beltW(belt.key) };
+  const r = multi ? driveCalc('a', q) : apiCalc('a', 'belt/c2c', q, againFor(renderA, 'c2c'));   // N pulleys: drive.js
   if (r === API_PENDING) return;                   // the Python server is on it: the last result stays until it answers
   if (r.error) {
-    res.innerHTML = resetNumbers(res) + errorBlock(r.code === 'too_short' ? 'Belt too short' : 'Missing input', emph(r.error)) + notesHTML(apiNotes(r.notes));
+    res.innerHTML = resetNumbers(res) + errorBlock({ too_short: 'Belt too short', path: 'Belt path can’t be built' }[r.code] || 'Missing input', emph(r.error)) + notesHTML(apiNotes(r.notes));
     drawLayout(svg, r.geometry ? { belt, N1, N2, g: r.geometry, labelC: r.C } : null);
     return;
   }
@@ -274,7 +278,7 @@ function renderA() {
       <div class="hero-sub" data-k="sub">${alt(Cd)}${allow ? ` · nominal ${fl(C, 3)} ${sgnL(allow, 2)}` : ''}</div>
       <button type="button" class="btn sm copy" data-copy="${fl(Cd, 3)}">Copy</button>
     </div>
-    ${kvHTML(belt, g, N1, N2)}
+    ${g.drive ? driveKvHTML(belt, g, stockList(belt.key)) : kvHTML(belt, g, N1, N2)}
     ${notesHTML(notes)}`;
   rollNumbers(res);
   animateHero(res);
@@ -313,7 +317,8 @@ function renderB(keepSel) {
   const belt = BELTS[B.type], p = belt.pitch;
   const N1 = Math.round(num($('b-n1'))), N2 = Math.round(num($('b-n2')));
   const Ct = num($('b-c'));
-  const res = $('b-results'), svg = $('b-svg'), meta = $('b-viz-meta');
+  const res = $('b-results'), svg = $('b-svg'), meta = $('b-viz-meta'), multi = driveMulti();
+  plistSoon();
   rollTo($('b-c-hint'), Ct > 0 ? `= ${alt(Ct)}` : '');
 
   if (!(N1 >= 4 && N2 >= 4 && N1 <= 1000 && N2 <= 1000) || !(Ct > 0)) {
@@ -321,13 +326,14 @@ function renderB(keepSel) {
     meta.textContent = ''; drawLayout(svg, null); return;
   }
 
-  const r = apiCalc('b', 'belt/length', { type: B.type, n1: N1, n2: N2, target_c: Ct, stock: stockList(B.type), selected: keepSel ? B.selL : null, width: beltW(belt.key) },
-    againFor(() => renderB(keepSel), 'length'));
+  const q = { type: B.type, n1: N1, n2: N2, target_c: Ct, stock: stockList(B.type), selected: keepSel ? B.selL : null, width: beltW(belt.key) };
+  const r = multi ? driveCalc('b', q) : apiCalc('b', 'belt/length', q, againFor(() => renderB(keepSel), 'length'));   // N pulleys: drive.js
   if (r === API_PENDING) return;
+  const pairTxt = multi ? driveTeethTxt('b') : `${N1}T / ${N2}T`;
   if (r.error) {
     B.flash = false;
-    res.innerHTML = resetNumbers(res) + errorBlock({ overlap: 'Pulleys overlap', none: 'No belt fits' }[r.code] || 'Missing input', emph(r.error));
-    meta.textContent = `${belt.label} · ${N1}T / ${N2}T`;
+    res.innerHTML = resetNumbers(res) + errorBlock({ overlap: 'Pulleys overlap', none: 'No belt fits', path: 'Belt path can’t be built' }[r.code] || 'Missing input', emph(r.error));
+    meta.textContent = `${belt.label} · ${pairTxt}`;
     drawLayout(svg, r.geometry ? { belt, N1, N2, g: r.geometry, labelC: Ct } : null);
     return;
   }
@@ -362,12 +368,12 @@ function renderB(keepSel) {
         ? tableHTML(stockRows, x => x.L === stockBest.L ? ['best', 'closest'] : null)
         : '<p class="empty-note">No stock size in your list fits these pulleys near this length.</p>'}
     </div>
-    ${kvHTML(belt, gs, N1, N2)}
+    ${gs.drive ? driveKvHTML(belt, gs, stockList(B.type)) : kvHTML(belt, gs, N1, N2)}
     ${notesHTML(notes)}`; });
 
   rollNumbers(res);
   animateHero(res);
-  rollTo(meta, `${belt.label} · ${sel.t}T belt (${lenR(sel.L)}) · ${N1}T / ${N2}T · ${beltSize(belt)}`);
+  rollTo(meta, `${belt.label} · ${sel.t}T belt (${lenR(sel.L)}) · ${pairTxt} · ${beltSize(belt)}`);
   drawLayout(svg, { belt, N1, N2, g: gs, labelC: sel.C });
   if (B.flash) { B.flash = false; flashPick(); }
 }
@@ -386,7 +392,8 @@ function sendToA(teeth) {
 
 /* ================= SECTION 3: pulley DXF ================= */
 const DX = { type: 'HTD5M', cur: 0, link: true, doc: null, flhTouched: false };
-/* linked mode: Pulley 1 = left layout pulley, Pulley 2 = right; teeth and belt type sync both ways */
+/* linked mode: the role 1 pulley (left / origin) and role 2 (right / at the C2C) take their teeth and belt type from the
+   calculator tab, both ways; added pulleys always use their own teeth */
 function layoutSrc() {
   return lastCalc === 'length'
     ? { tab: 'Belt length', type: B.type, typeBox: 'b-type', n: ['b-n1', 'b-n2'] }
@@ -396,13 +403,15 @@ function pullLayout() {
   if (!DX.link) return;
   const s = layoutSrc();
   if (DX.type !== s.type) { DX.type = s.type; setType($('d-type'), s.type); updateInds(); }
-  [0, 1].forEach(j => {
-    const v = $(s.n[j]).value;
+  [0, 1].forEach(k => {
+    const v = $(s.n[k]).value, j = roleIdx(k);
     DX.p[j].v['d-n'] = v;
     if (j === DX.cur && $('d-n').value !== v) { const old = num($('d-n')); $('d-n').value = v; nudge($('d-n'), Math.sign(parseFloat(v) - old)); }
   });
 }
 function pushLayout(kind) {
+  const k = roleOf(DX.cur);
+  if (kind !== 'type' && k < 0) { renderA(); renderB(true); return; }   // an added pulley: the layouts read its own teeth
   if (!DX.link) return;
   const s = layoutSrc();
   if (kind === 'type') {
@@ -410,18 +419,20 @@ function pushLayout(kind) {
     if (i && !i.checked) { i.checked = true; i.dispatchEvent(new Event('change', { bubbles: true })); }
     return;
   }
-  const el = $(s.n[DX.cur]);
+  const el = $(s.n[k]);
   if (el.value !== $('d-n').value) { el.value = $('d-n').value; el.dispatchEvent(new Event('input', { bubbles: true })); }
 }
-/* each pulley keeps its own form values; the form always shows pulley DX.cur */
+/* each pulley keeps its own form values; the form always shows pulley DX.cur. DX.p is the drive, in belt order:
+   { id, name, side (+1 teeth wrap it | −1 backside idler), x, y (mm from the role 1 pulley; added pulleys only), … } */
 const P_FIELDS = ['d-n', 'd-bore', 'd-flat', 'd-clear', 'd-hn', 'd-hd', 'd-hp', 'd-hr', 'd-fit', 'd-flh'];
 const P_CHECKS = ['d-flange', 'd-pitch'];
-function newPulley(n) {
-  return { bore: 'round', borePre: 'custom', holePre: 'none',
+function newPulley(n, k = 1) {
+  return { id: `p${k}`, name: `P${k}`, side: 1, x: 0, y: 0, bore: 'round', borePre: 'custom', holePre: 'none',
     v: { 'd-n': String(n), 'd-bore': '5', 'd-flat': '5.5', 'd-clear': '0', 'd-hn': '4', 'd-hd': '4.3', 'd-hp': '22.627', 'd-hr': '45', 'd-fit': '0', 'd-flh': '4' },
     c: { 'd-flange': false, 'd-pitch': false } };
 }
-DX.p = [newPulley(20), newPulley(40)];
+DX.p = [newPulley(20, 1), newPulley(40, 2)];
+DX.roles = ['p1', 'p2'];                                   // ids of the pulleys whose C2C the calculators solve
 ['bore', 'borePre', 'holePre'].forEach(k => Object.defineProperty(DX, k, { get: () => DX.p[DX.cur][k], set: v => { DX.p[DX.cur][k] = v; } }));
 function readForm() {
   const s = DX.p[DX.cur];
@@ -435,7 +446,7 @@ function writeForm() {
   setBoreShape(s.bore);
   setType($('d-bore-preset'), s.borePre);
   setType($('d-hole-preset'), s.holePre);
-  $('d-which').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.which === DX.cur)));
+  plistSoon();
 }
 function switchPulley(j, skipRead) {
   if (!skipRead) readForm();
@@ -450,22 +461,22 @@ function switchPulley(j, skipRead) {
   }
   updateInds(); renderD(); redrawLayouts();
 }
-/* both pulleys side by side in one file */
+/* every pulley side by side in one file (both, for the original pair: left then right); layers and titles follow the names */
 function bothDoc() {
-  const belt = BELTS[DX.type], out = [], th = Math.max(2, belt.pitch * 0.7);
+  const belt = BELTS[DX.type], out = [], th = Math.max(2, belt.pitch * 0.7), order = driveMulti() ? DX.p.map((_, j) => j) : [roleIdx(0), roleIdx(1)];
   let x = 0;
-  for (let j = 0; j < 2; j++) {
-    const st = dxfSettings(j), N = st.n;
-    if (!(N >= 6 && N <= 400)) return { error: `Pulley ${j + 1}: enter 6–400 teeth.` };
-    if (!holesOK(st.holes) || (st.bore !== 'none' && !(st.boreSize > 0))) return { error: `Pulley ${j + 1}: check the bore and hole fields.` };
-    const d = singleDoc(belt, N, st);
-    if (d.error) return { error: `Pulley ${j + 1}: ${d.error}` };
-    const e = d.ents.map(en => en.layer === 'PULLEY' ? { ...en, layer: `PULLEY_${j + 1}` } : en);
+  for (const j of order) {
+    const st = dxfSettings(j), N = st.n, tag = pTag(DX.p[j]), idl = DX.p[j].side < 0;
+    if (!(N >= 6 && N <= 400)) return { error: `Pulley ${tag}: enter 6–400 teeth.` };
+    if (!holesOK(st.holes) || (st.bore !== 'none' && !(st.boreSize > 0))) return { error: `Pulley ${tag}: check the bore and hole fields.` };
+    const d = idl ? idlerDoc(belt, N, st) : singleDoc(belt, N, st);
+    if (d.error) return { error: `Pulley ${tag}: ${d.error}` };
+    const e = d.ents.map(en => en.layer === 'PULLEY' ? { ...en, layer: `PULLEY_${tag}` } : en);
     const b = extentsOf(e), dx = x - b[0];
-    out.push({ type: 'text', layer: 'TEXT', p: [x, b[3] + th * 0.8], h: th, s: `PULLEY ${j + 1}  ${N}T ${belt.code}` }, ...shiftEnts(e, dx, 0));
+    out.push({ type: 'text', layer: 'TEXT', p: [x, b[3] + th * 0.8], h: th, s: `PULLEY ${tag}  ${N}T ${belt.code}${idl ? '  BACKSIDE IDLER' : ''}` }, ...shiftEnts(e, dx, 0));
     x = b[2] + dx + Math.max(8, belt.pitch * 2);
   }
-  return { ents: out, name: `pulleys_${belt.key}_${dxfSettings(0).n}T_${dxfSettings(1).n}T.dxf` };
+  return { ents: out, name: `pulleys_${belt.key}_${order.map(j => `${dxfSettings(j).n}T`).join('_')}.dxf` };
 }
 const BORE_PRE = [
   { v: 'none', t: 'No bore', s: 'solid disc' },
@@ -526,13 +537,10 @@ function updateChips() {
   const s = chipSource();
   const ok = n => Number.isFinite(n) && n >= 6;
   $('d-chips').innerHTML = `<span class="chips-l">From ${s.from} (${BELTS[s.type].label}):</span>` +
-    (ok(s.n1) ? `<button type="button" class="chip" data-chip="0">P1 · ${s.n1}T</button>` : '') +
-    (ok(s.n2) ? `<button type="button" class="chip" data-chip="1">P2 · ${s.n2}T</button>` : '') +
+    (ok(s.n1) ? `<button type="button" class="chip" data-chip="0">${DX.p[roleIdx(0)].name} · ${s.n1}T</button>` : '') +
+    (ok(s.n2) ? `<button type="button" class="chip" data-chip="1">${DX.p[roleIdx(1)].name} · ${s.n2}T</button>` : '') +
     (ok(s.n1) && ok(s.n2) ? '<button type="button" class="chip" data-chip="both">Both</button>' : '');
-  $('d-which').querySelectorAll('button').forEach(b => {
-    const j = +b.dataset.which, n = j === DX.cur ? Math.round(num($('d-n'))) : Math.round(parseFloat(DX.p[j].v['d-n']));
-    rollTo(b, `P${j + 1} · ${j ? 'right' : 'left'}${Number.isFinite(n) ? ` · ${n}T` : ''}`);
-  });
+  plistSoon();
   $('d-chips').hidden = DX.link;
   $('d-link').checked = DX.link;
   $('d-link-note').textContent = DX.link ? `· teeth & belt sync with the ${layoutSrc().tab} tab` : '· pulleys are independent of the layout';
@@ -569,6 +577,7 @@ function renderD() {
   if (!(N >= 6 && N <= 400)) return fail('Missing input', 'Enter between 6 and 400 teeth.');
   if (st.bore !== 'none' && !(st.boreSize > 0)) return fail('Missing input', 'Enter a bore size, or pick “No bore”.');
   if (!holesOK(st.holes)) return fail('Missing input', 'Check the mounting-hole fields (1–24 holes, size and bolt circle).');
+  if (DX.p[DX.cur].side < 0) return driveIdlerD(belt, N, st, fail);    // a backside idler: a smooth roller (drive-ui.js)
   DX.req = { type: DX.type, n: N, ...pulleyReq(st) };
   const r = apiCalc('d', 'belt/pulley', DX.req, againFor(renderD, 'dxf'));
   if (r === API_PENDING) return;
@@ -592,14 +601,14 @@ function renderD() {
   const rootD = part.od - 2 * part.D;
   res.innerHTML = `
     <div class="hero">
-      <div class="hero-label" data-k="hl">Pulley ${DX.cur + 1} · outside Ø · ${N}T ${belt.label}</div>
+      <div class="hero-label" data-k="hl">Pulley ${pTag(DX.p[DX.cur])} · outside Ø · ${N}T ${belt.label}</div>
       <div class="hero-value"><span class="num" data-k="hero" data-v="${toU(part.od)}" data-d="${dU(3)}">${fl(part.od, 3)}</span><small data-k="hu">${U()}</small></div>
       <div class="hero-sub" data-k="sub">pitch Ø ${len(part.pd, 3)} · ${alt(part.od)} OD</div>
       <button type="button" class="btn sm copy" data-copy="${fl(part.od, 3)}">Copy</button>
     </div>
     <div class="dl">
       <button type="button" class="btn primary icon" data-dl-dxf>${ICON_DL}Download DXF</button>
-      <button type="button" class="btn icon" data-dl-both>${ICON_PUL}Both pulleys</button>
+      <button type="button" class="btn icon" data-dl-both>${ICON_PUL}${DX.p.length > 2 ? 'All pulleys' : 'Both pulleys'}</button>
       <span class="hint">${DX.doc.name} · R12 · mm · ${layers}</span>
     </div>
     ${kvGrid([
@@ -729,7 +738,9 @@ const PREVIEW_TEETH = 30;
 function calcLayout() {                       // linked: the Center distance layout; else the last calculator tab, if it is valid
   const from = BT.link || lastCalc !== 'length' ? 'c2c' : 'length', o = $(from === 'length' ? 'b-svg' : 'a-svg')._last;
   if (!o || !(o.g.gap > 0)) return null;
-  return { o, t: Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / o.belt.pitch), from: from === 'length' ? 'Belt length' : 'Center distance' };
+  const tab = from === 'length' ? 'Belt length' : 'Center distance';
+  if (o.g.drive) { const g = driveExportGeo(o); return g && g.valid ? { o, g, t: Math.round(g.L / o.belt.pitch), from: tab } : null; }   // N pulleys
+  return { o, t: Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / o.belt.pitch), from: tab };
 }
 /* render DXF entities into an SVG preview (model y up → screen y down) */
 function drawDoc(svg, ents) {
@@ -779,7 +790,7 @@ function renderT() {
   const segOn = $('t-segon').checked;
   $('t-seg-wrap').hidden = !segOn;
   const loopOK = !!lay && lay.o.belt === std && lay.t === n;
-  rollTo($('t-loop-note'), loopOK ? `· ${lay.o.N1}T + ${lay.o.N2}T at ${len(lay.o.labelC, 2)}${BT.link ? ', as on the Center distance tab' : ''}` : '· needs a matching layout');
+  rollTo($('t-loop-note'), loopOK ? `· ${lay.g ? lay.g.ps.map(q => `${q.N}T`).join(' + ') : `${lay.o.N1}T + ${lay.o.N2}T`} at ${len(lay.o.labelC, 2)}${BT.link ? ', as on the Center distance tab' : ''}` : '· needs a matching layout');
   rollTo($('t-n-hint'), n > 0 ? `= ${lenR(n * p)} pitch length · ${partNo(belt, n * p, W)}` : '');
   const fail = (title, msg) => { res.innerHTML = resetNumbers(res) + errorBlock(title, msg); $('t-svg').innerHTML = ''; BT.doc = null; rollTo($('t-viz-meta'), ''); $('t-legend').hidden = true; };
   if (!(n >= 10 && n <= 2000)) return fail('Missing input', 'Enter between 10 and 2000 teeth.');
@@ -788,9 +799,10 @@ function renderT() {
     return fail('Nothing to export', $('t-loop').checked ? 'The loop needs a matching layout — turn on another view, or use the layout chip.' : 'Turn on at least one view.');
   }
   const seg = segOn ? Math.max(1, Math.round(num($('t-seg')))) : 0;
-  const o = { loop: views.loop ? { r1: lay.o.g.r1, r2: lay.o.g.r2, C: lay.o.labelC } : null, profile: views.profile, top: views.top, seg, pitch: $('t-pitch').checked, std: std.thick };
-  const doc = beltDoc(belt, n, W, o), L = +(n * p).toFixed(3), Ld = Number.isInteger(L) ? 0 : 2, back = belt.thick - belt.toothH - belt.pld;
-  BT.doc = { ents: doc.ents.filter(e => e.layer !== 'OVER'), name: `belt_${belt.key}_${doc.part}${seg ? `_${doc.m}T-piece` : ''}.dxf` };
+  const o = { loop: views.loop ? (lay.g ? { g: lay.g } : { r1: lay.o.g.r1, r2: lay.o.g.r2, C: lay.o.labelC }) : null, profile: views.profile, top: views.top, seg, pitch: $('t-pitch').checked, std: std.thick };
+  const mkDoc = o.loop && o.loop.g ? driveBeltDoc : beltDoc;           // the loop round N pulleys: drive.js
+  const doc = mkDoc(belt, n, W, o), L = +(n * p).toFixed(3), Ld = Number.isInteger(L) ? 0 : 2, back = belt.thick - belt.toothH - belt.pld;
+  BT.doc = { ents: doc.ents.filter(e => e.layer !== 'OVER'), name: `belt_${belt.key}_${doc.part}${seg ? `_${doc.m}T-piece` : ''}.dxf`, local: mkDoc === driveBeltDoc };
   BT.req = { type: BT.type, teeth: n, width: W, thickness: T, loop: views.loop ? { n1: lay.o.N1, n2: lay.o.N2, center: lay.o.labelC } : null,
     profile: views.profile, top: views.top, piece: seg, pitch: $('t-pitch').checked };
   const layers = [...new Set(BT.doc.ents.map(e => e.layer))].join(', ');
@@ -832,7 +844,7 @@ function renderT() {
   rollNumbers(res);
   animateHero(res);
   const big = !seg && n > PREVIEW_TEETH;
-  drawDoc($('t-svg'), big ? beltDoc(belt, n, W, { ...o, seg: PREVIEW_TEETH }).ents : doc.ents);
+  drawDoc($('t-svg'), big ? mkDoc(belt, n, W, { ...o, seg: PREVIEW_TEETH }).ents : doc.ents);
   rollTo($('t-viz-meta'), `${doc.part} · ${len(T, 2)} thick${big ? ` · preview shows ${PREVIEW_TEETH} of ${n} teeth, the DXF has all` : ''}`);
 }
 
@@ -851,19 +863,28 @@ function renderR() {
   if (!S) { $('r-card').innerHTML = ''; return fail('Missing input', 'Enter your screen resolution and its diagonal in inches.'); }
   drawRef($('r-card'), S.pxmm); syncRefs('r');
   const from = lastCalc === 'length' ? 'Belt length' : 'Center distance', o = $(lastCalc === 'length' ? 'b-svg' : 'a-svg')._last;
-  if (!o || !(o.g.gap > 0)) return fail('No layout yet', `Set up a valid layout on the ${from} tab — it is drawn here at 1:1.`);
-  const T = beltThick(o.belt), belt = { ...o.belt, thick: T }, notes = [];
-  let doc = layoutDoc(belt, o.N1, o.N2, o.labelC, [dxfSettings(0), dxfSettings(1)], 'assembly');
-  if (doc.error) { notes.push(['warn', `${doc.error} — showing the belt only (fix it on the Pulley DXF tab).`]); doc = layoutDoc(belt, o.N1, o.N2, o.labelC, [dxfSettings(0), dxfSettings(1)], 'belt'); }
-  const ents = doc.ents.slice(), bo = doc.bo, showPitch = $('r-pitch').checked;
-  if (showPitch) {
-    ents.push({ type: 'poly', layer: 'PITCH', verts: loopVerts(bo.bp, 0) },
-      { type: 'circle', layer: 'PITCH', c: [0, 0], r: bo.bp.r1 }, { type: 'circle', layer: 'PITCH', c: [o.labelC, 0], r: bo.bp.r2 });
+  if (!o || !(o.g.drive ? o.g.valid : o.g.gap > 0)) return fail('No layout yet', `Set up a valid layout on the ${from} tab — it is drawn here at 1:1.`);
+  const T = beltThick(o.belt), belt = { ...o.belt, thick: T }, showPitch = $('r-pitch').checked;
+  let notes = [], ents, bo, pulLayers = ['PULLEY_1', 'PULLEY_2'], overD, set = `${o.N1}T + ${o.N2}T`;
+  if (o.g.drive) {                                   // three or more pulleys, or a backside idler (drive-ui.js)
+    const d = driveTrueSize(o, belt, showPitch);
+    if (d.error) return fail('No layout yet', d.error);
+    ({ ents, bo, notes } = d); pulLayers = d.layers; overD = d.overD; set = d.set;
+  } else {
+    const sts = [dxfSettings(roleIdx(0)), dxfSettings(roleIdx(1))];
+    let doc = layoutDoc(belt, o.N1, o.N2, o.labelC, sts, 'assembly');
+    if (doc.error) { notes.push(['warn', `${doc.error} — showing the belt only (fix it on the Pulley DXF tab).`]); doc = layoutDoc(belt, o.N1, o.N2, o.labelC, sts, 'belt'); }
+    ents = doc.ents.slice(); bo = doc.bo;
+    if (showPitch) {
+      ents.push({ type: 'poly', layer: 'PITCH', verts: loopVerts(bo.bp, 0) },
+        { type: 'circle', layer: 'PITCH', c: [0, 0], r: bo.bp.r1 }, { type: 'circle', layer: 'PITCH', c: [o.labelC, 0], r: bo.bp.r2 });
+    }
+    overD = back => polyPath(loopVerts(bo.bp, back), Q3);
   }
   const over = T > o.belt.thick + 1e-6
-    ? `<path d="${polyPath(bo.outer, Q3)} ${polyPath(loopVerts(bo.bp, bo.tg.back - (T - o.belt.thick)), Q3)}" class="rv-over" fill-rule="evenodd" ${NS} stroke-width="1"/>` : '';
+    ? `<path d="${polyPath(bo.outer, Q3)} ${overD(bo.tg.back - (T - o.belt.thick))}" class="rv-over" fill-rule="evenodd" ${NS} stroke-width="1"/>` : '';
   const k = S.pxmm, sz = trueSizeSVG(svg, showPitch ? ents : ents.filter(e => e.layer !== 'CENTER'), k, $('r-ruler').checked,
-    [[['PULLEY_1', 'PULLEY_2'], 'rv-pul'], [['BORE', 'HOLES'], 'rv-hole'], [['BELT'], 'rv-belt']], over);
+    [[pulLayers, 'rv-pul'], [['BORE', 'HOLES'], 'rv-hole'], [['BELT'], 'rv-belt']], over);
   if (sz.W * k > $('r-scroll').clientWidth + 1) notes.push(['info', `The drawing is ${UNIT === 'in' ? len(sz.W, 1) : `${f(sz.W / 10, 1)} cm`} wide — wider than this window, so scroll sideways.`]);
   if (!sameDet) notes.push(['info', `This differs from the detected ${dw} × ${dh}. Enter the monitor's native resolution, not a scaled one.`]);
   notes.push(['info', `Browser zoom and display scaling (${Math.round(S.dpr * 100)} % now) are taken into account. Check the scale with a reference object below.`]);
@@ -883,7 +904,7 @@ function renderR() {
     ])}
     ${notesHTML(notes)}`;
   rollNumbers(res);
-  rollTo(meta, `1:1 · ${o.belt.label} · ${o.N1}T + ${o.N2}T · C2C ${len(o.labelC, 2)} · ${len(T, 2)} thick`);
+  rollTo(meta, `1:1 · ${o.belt.label} · ${set} · C2C ${len(o.labelC, 2)} · ${len(T, 2)} thick`);
 }
 ['r-w', 'r-h', 'r-diag'].forEach(id => $(id).addEventListener('input', renderR));
 buildRefs($('r-refs')); buildRefs($('kr-refs'));
@@ -1058,8 +1079,9 @@ function closeMenus() {
 }
 function exportLayout(src, what) {
   const o = $(src)._last;
+  if (o && o.g.drive) { driveExport(src, what); return; }        // N pulleys (drive-ui.js)
   if (!o || !(o.g.gap > 0)) { toast('No valid layout to export.'); return; }
-  const belt = o.belt, sts = [dxfSettings(0), dxfSettings(1)], thick = beltThick(belt);
+  const belt = o.belt, sts = [dxfSettings(roleIdx(0)), dxfSettings(roleIdx(1))], thick = beltThick(belt);
   const teeth = Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / belt.pitch);
   apiSave('belt/layout/dxf', { type: belt.key, n1: o.N1, n2: o.N2, teeth, center: o.labelC, width: beltW(belt.key), thickness: thick, what,
     p1: pulleyReq(sts[0]), p2: pulleyReq(sts[1]) }, () => {
@@ -1073,6 +1095,7 @@ function exportLayout(src, what) {
 /* belt / assembly export block on the DXF tab, fed by the last calculator tab used */
 function asmHTML() {
   const src = lastCalc === 'length' ? 'b-svg' : 'a-svg', o = $(src)._last;
+  if (o && o.g.drive) return driveAsmHTML(src, o);
   if (!o || !(o.g.gap > 0)) return '';
   const Nt = Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / o.belt.pitch);
   return `<div class="asm">
@@ -1190,8 +1213,9 @@ $('t-wchips').addEventListener('click', e => {
 });
 $('t-results').addEventListener('click', e => {
   if (!e.target.closest('[data-dl-belt]') || !BT.doc) return;
-  const doc = BT.doc;
-  apiSave('belt/belt/dxf', BT.req, () => ({ name: doc.name, text: toDXF(doc.ents) }), { name: doc.name });
+  const doc = BT.doc, build = () => ({ name: doc.name, text: toDXF(doc.ents) });
+  if (doc.local) driveSave(build);                  // a loop round N pulleys: built here
+  else apiSave('belt/belt/dxf', BT.req, build, { name: doc.name });
 });
 $('d-flh').addEventListener('input', () => { DX.flhTouched = true; renderD(); });
 $('d-flange').addEventListener('change', renderD);
@@ -1211,25 +1235,21 @@ $('d-chips').addEventListener('click', e => {
   readForm();
   DX.type = s.type; setType($('d-type'), s.type);
   if (!DX.flhTouched) DX.p.forEach(p => { p.v['d-flh'] = String(FLANGE_DEFAULT[s.type]); });
-  if (which !== '1') DX.p[0].v['d-n'] = String(s.n1);
-  if (which !== '0') DX.p[1].v['d-n'] = String(s.n2);
-  switchPulley(which === 'both' ? DX.cur : +which, true);
-});
-$('d-which').addEventListener('click', e => {
-  const b = e.target.closest('[data-which]');
-  if (b && +b.dataset.which !== DX.cur) switchPulley(+b.dataset.which);
+  if (which !== '1') DX.p[roleIdx(0)].v['d-n'] = String(s.n1);
+  if (which !== '0') DX.p[roleIdx(1)].v['d-n'] = String(s.n2);
+  switchPulley(which === 'both' ? DX.cur : roleIdx(+which), true);
 });
 $('d-results').addEventListener('click', e => {
   if (e.target.closest('[data-dl-both]')) {
-    const a = dxfSettings(0), b = dxfSettings(1);
-    apiSave('belt/pulleys/dxf', { type: DX.type, p1: { n: a.n, ...pulleyReq(a) }, p2: { n: b.n, ...pulleyReq(b) } }, () => {
-      const d = bothDoc();
-      return d.error ? d : { name: d.name, text: toDXF(d.ents) };
-    });
+    const build = () => { const d = bothDoc(); return d.error ? d : { name: d.name, text: toDXF(d.ents) }; };
+    if (driveMulti()) { driveSave(build); return; }  // every pulley of an N-pulley drive: built here
+    const a = dxfSettings(roleIdx(0)), b = dxfSettings(roleIdx(1));
+    apiSave('belt/pulleys/dxf', { type: DX.type, p1: { n: a.n, ...pulleyReq(a) }, p2: { n: b.n, ...pulleyReq(b) } }, build);
     return;
   }
   if (!e.target.closest('[data-dl-dxf]') || !DX.doc) return;
   const doc = DX.doc;
+  if (doc.idler) { driveSave(() => { const d = idlerDoc(doc.belt, doc.N, doc.st); return d.error ? d : { name: doc.name, text: toDXF(d.ents) }; }); return; }
   apiSave('belt/pulley/dxf', DX.req, () => {
     const d = singleDoc(doc.belt, doc.N, doc.st);
     return d.error ? d : { name: doc.name, text: toDXF(d.ents) };
@@ -2304,7 +2324,7 @@ function snapshot() {
     f: Object.fromEntries(FORM_IDS.map(id => [id, $(id).value])),
     c: Object.fromEntries(CHECK_IDS.map(id => [id, $(id).checked])),
     a: { type: A.type, unit: A.unit }, b: { type: B.type, stock: stockText, selL: B.selL }, calc: lastCalc,
-    d: { type: DX.type, cur: DX.cur, p: DX.p, flhTouched: DX.flhTouched, link: DX.link },
+    d: { type: DX.type, cur: DX.cur, p: DX.p, roles: DX.roles, flhTouched: DX.flhTouched, link: DX.link },
     t: { type: BT.type, link: BT.link, wBy: BT.wBy, hBy: BT.hBy },
     speed: ANIM.speed, playing: ANIM.playing, unit: UNIT, ref: REF,
   };
@@ -2315,14 +2335,16 @@ function saveNow() {
 }
 let saveT = 0;
 function scheduleSave() { if (consent === 'yes') { clearTimeout(saveT); saveT = setTimeout(saveNow, 350); } }
-function cleanPulley(p, n) {
-  const d = newPulley(n);
+function cleanPulley(p, n, k) {                       // k: the number it gets when the saved one has none (older settings)
+  const d = newPulley(n, k);
   if (!p || typeof p !== 'object') return d;
-  const pick = (v, ok, def) => ok.includes(v) ? v : def;
+  const pick = (v, ok, def) => ok.includes(v) ? v : def, at = v => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 1e5 ? v : 0;
   const v = { ...d.v }, c = { ...d.c };
   Object.keys(v).forEach(k => { if (p.v && typeof p.v[k] === 'string') v[k] = p.v[k]; });
   Object.keys(c).forEach(k => { if (p.c && k in p.c) c[k] = !!p.c[k]; });
-  return { bore: pick(p.bore, ['round', 'hex', 'square', 'rex', 'd', 'dd'], 'round'), borePre: pick(p.borePre, ['none', 'rev', 'rex', 'gbd', 'b14', 'custom'], 'custom'),
+  const id = typeof p.id === 'string' && /^p\d{1,3}$/.test(p.id) ? p.id : d.id, name = typeof p.name === 'string' && /^P\d{1,3}$/.test(p.name) ? p.name : d.name;
+  return { id, name, side: p.side === -1 ? -1 : 1, x: at(p.x), y: at(p.y),
+    bore: pick(p.bore, ['round', 'hex', 'square', 'rex', 'd', 'dd'], 'round'), borePre: pick(p.borePre, ['none', 'rev', 'rex', 'gbd', 'b14', 'custom'], 'custom'),
     holePre: pick(p.holePre, ['none', 'sonic', 'servo', 'custom'], 'none'), v, c };
 }
 function restoreSettings() {
@@ -2356,8 +2378,14 @@ function restoreSettings() {
     }
     if (s.d) {
       if (ok(s.d.type)) { DX.type = s.d.type; setType($('d-type'), DX.type); }
-      if (Array.isArray(s.d.p) && s.d.p.length === 2) DX.p = [cleanPulley(s.d.p[0], 20), cleanPulley(s.d.p[1], 40)];
-      DX.cur = s.d.cur === 1 ? 1 : 0;
+      if (Array.isArray(s.d.p) && s.d.p.length >= 2 && s.d.p.length <= DRIVE_MAX) {
+        const ps = s.d.p.map((p, j) => cleanPulley(p, j === 1 ? 40 : 20, j + 1));
+        const uniq = k => new Set(ps.map(p => p[k])).size === ps.length;
+        DX.p = uniq('id') && uniq('name') ? ps : ps.map((p, j) => ({ ...p, id: `p${j + 1}`, name: `P${j + 1}` }));
+        const r = s.d.roles;
+        DX.roles = Array.isArray(r) && r.length === 2 && r[0] !== r[1] && r.every(id => DX.p.some(p => p.id === id)) ? r.slice() : [DX.p[0].id, DX.p[1].id];
+      }
+      DX.cur = Number.isInteger(s.d.cur) && s.d.cur >= 0 && s.d.cur < DX.p.length ? s.d.cur : 0;
       DX.flhTouched = !!s.d.flhTouched;
       DX.link = s.d.link !== false; $('d-link').checked = DX.link;
       writeForm();
@@ -2431,24 +2459,24 @@ function fixTarget(ids) {
 }
 function pulleyProblems() {
   pullLayout();
-  const out = [], s = layoutSrc(), belt = BELTS[DX.type];
+  const out = [], belt = BELTS[DX.type], multi = driveMulti();
   const check = (id, j, N, st, who) => {
     let msg = null, min = null;
-    const build = k => pulleyParts(belt, k, st);
+    const build = k => (DX.p[j].side < 0 ? idlerParts : pulleyParts)(belt, k, st), k = roleOf(j);
     if (!(N >= 6 && N <= 400)) { msg = 'Teeth must be between 6 and 400.'; if (Number.isFinite(N)) min = N > 400 ? 400 : build(6).error ? minTeeth(build, 6, 400) : 6; }
     else if (st.bore !== 'none' && !(st.boreSize > 0)) msg = 'Enter a bore size, or pick “No bore”.';
     else if (!holesOK(st.holes)) msg = 'Check the mounting-hole fields (1–24 holes, size and bolt circle).';
     if (!msg) { const p = build(N); if (p.error) { msg = p.error; min = minTeeth(build, N, 400); } }
     if (msg) out.push({ id, j, msg, dkey: `${id}|${N}|${msg}`,
       acts: [...(min ? [[`Use ${min}T`, `pn:${id}:${min}`, 'primary']] : []), ['Fix in Pulley DXF →', `p:${j}`]],
-      title: `${who} ${j + 1} (${j ? 'right' : 'left'})${Number.isFinite(N) ? ` · ${N}T` : ''} can't be generated` });
+      title: `${who} ${multi ? DX.p[j].name : `${k + 1} (${k ? 'right' : 'left'})`}${Number.isFinite(N) ? ` · ${N}T` : ''} can't be generated` });
   };
-  for (let j = 0; j < 2; j++) {
-    const st = dxfSettings(j);
+  for (const j of multi ? DX.p.map((_, i) => i) : [roleIdx(0), roleIdx(1)]) {
+    const st = dxfSettings(j), k = roleOf(j);
     check(`d${j}`, j, st.n, st, 'Pulley');
-    if (!DX.link) {                       // the layout uses its own teeth with these bore / hole settings
+    if (!DX.link && k >= 0) {             // the layout uses its own teeth with these bore / hole settings
       const lo = $(lastCalc === 'length' ? 'b-svg' : 'a-svg')._last;
-      if (lo && lo.belt === belt) check(`l${j}`, j, j ? lo.N2 : lo.N1, st, 'Layout pulley');
+      if (lo && lo.belt === belt) check(`l${j}`, j, k ? lo.N2 : lo.N1, st, 'Layout pulley');
     }
   }
   return out;
@@ -2474,7 +2502,8 @@ const tabAct = (tab, label) => document.querySelector(`.tab[data-tab="${tab}"][a
 const roundUp = mm => { const q = UNIT === 'in' ? IN / 100 : 0.1; return +(Math.ceil((mm + 1e-6) / q) * q).toFixed(4); };   // a tidy value just above mm
 function beltLayoutProblems() {
   const out = [];
-  if (lastCalc === 'length') {                     // Belt length tab: the target C2C must clear the pulley ODs
+  if (driveMulti()) out.push(...driveLayoutProblems());   // N pulleys: the calculator tabs' own answers (drive-ui.js)
+  else if (lastCalc === 'length') {                     // Belt length tab: the target C2C must clear the pulley ODs
     const belt = BELTS[B.type], N1 = Math.round(num($('b-n1'))), N2 = Math.round(num($('b-n2'))), Ct = num($('b-c'));
     if (N1 >= 4 && N2 >= 4 && N1 <= 1000 && N2 <= 1000 && Ct > 0) {
       const g = analyze(belt, N1, N2, Ct);
@@ -2640,18 +2669,18 @@ $('alerts').addEventListener('click', e => {
     return;
   }
   if (kind === 'pn') {                             // a pulley to its smallest working tooth count
-    const [, id, nv] = fix.dataset.fix.split(':'), j = +id.slice(1), n = +nv;
-    const layoutToo = id[0] === 'l' || DX.link;
+    const [, id, nv] = fix.dataset.fix.split(':'), j = +id.slice(1), n = +nv, k = roleOf(j);
+    const layoutToo = k >= 0 && (id[0] === 'l' || DX.link);   // added pulleys: their one tooth count is the layout's too
     FLYING.add(id); popAlert(el); renderAlerts();
-    gooFly(fix, fixTarget([id[0] === 'd' && j === DX.cur && 'd-n', layoutToo && layoutSrc().n[j]]), () => {
+    gooFly(fix, fixTarget([id[0] === 'd' && j === DX.cur && 'd-n', layoutToo && layoutSrc().n[k]]), () => {
       FLYING.delete(id);
       if (id[0] === 'd') {                         // the Pulley DXF pulley (and the layout, when they are linked)
         DX.p[j].v['d-n'] = String(n);
         if (j === DX.cur) setField('d-n', n);
       }
-      if (layoutToo) { const el = $(layoutSrc().n[j]); setField(el.id, n); el.dispatchEvent(new Event('input', { bubbles: true })); }
+      if (layoutToo) { const el = $(layoutSrc().n[k]); setField(el.id, n); el.dispatchEvent(new Event('input', { bubbles: true })); }
       refreshLayouts(); renderKTabBelt(); renderAlerts();
-      toast(`Pulley ${j + 1} set to ${n} teeth.`);
+      toast(`Pulley ${pTag(DX.p[j])} set to ${n} teeth.`);
     });
     return;
   }
@@ -2674,7 +2703,7 @@ $('alerts').addEventListener('click', e => {
     return;
   }
   const j = +arg;
-  if (!$('d-which').closest('.panel').hidden) { if (j !== DX.cur) switchPulley(j); }
+  if (!$('d-plist').closest('.panel').hidden) { if (j !== DX.cur) switchPulley(j); }
   else { readForm(); DX.cur = j; writeForm(); switchTab('dxf'); }
   window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
 });
@@ -2778,6 +2807,7 @@ $('sys-units').addEventListener('click', e => {
 });
 
 /* ---------------- init ---------------- */
+driveInit();                                        // the pulley lists and dragging (drive-ui.js)
 const saved = restoreSettings();
 setMotion(!reduceMotion);
 $('motion-on').addEventListener('change', e => setMotion(e.target.checked, true));
@@ -2794,7 +2824,6 @@ addInd($('a-units'), 'button[aria-pressed="true"]', 'u-ind');
 addInd($('sys-units'), 'button[aria-pressed="true"]', 'u-ind');
 if (saved && saved.unit === 'in') setUnit('in');
 addInd($('d-bore-type'), 'button[aria-pressed="true"]', 'u-ind');
-addInd($('d-which'), 'button[aria-pressed="true"]', 'u-ind');
 document.querySelectorAll('[data-anim-speed]').forEach(paintRange);
 switchTab(startTab, true);
 renderKA(); renderKB(true);                        // the chain layouts exist before their tabs are opened

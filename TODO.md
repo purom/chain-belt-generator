@@ -13,7 +13,13 @@ from `file://`; load order matters and is set in `belt-chain-calculator.html`):
 | `static/step.js` | STEP (3D) writer — no DOM |
 | `static/motion.js` | Every animation: motion preference, rolling numbers, glide, panels, morph, goo, pop, warning stack, toasts, downloads |
 | `static/truesize.js` | Screen scale, reference objects, 1:1 drawing + ruler |
+| `static/drive.js` | N-pulley belt drives (toothed pulleys + backside idlers, belt in list order): loop geometry, C2C / length answers, outline, DXF — no DOM |
+| `static/drive-ui.js` | N-pulley UI: the pulley list (add / remove / reorder / side / position), animated layout, dragging, exports — loads before `app.js` |
+| `static/drive.css` | Styles for the pulley list and the N-pulley layout marks |
 | `static/app.js` | The page: state, rendering, inputs, warnings, settings, start-up |
+
+With the original two toothed pulleys the page runs exactly the 2-pulley code above (and the Python API); `drive.js` / `drive-ui.js`
+take over for 3+ pulleys or a backside idler, computed in the page (the API has no N-pulley endpoints yet).
 
 `belt.js`, `chain.js` and `step.js` are the parts to port to Python (steps 2–3 below); `motion.js` and
 `styles.css` are the starting point for steps 5–6.

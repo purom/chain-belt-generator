@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="static/styles.css">
+<link rel="stylesheet" href="static/drive.css">
 </head>
 <body>
 <div class="wrap">
@@ -68,6 +69,7 @@
             <div class="stepper"><button type="button" data-step="-1" data-for="a-n2" aria-label="Fewer teeth">−</button><input id="a-n2" type="number" inputmode="numeric" min="4" step="1" value="40" data-snap><button type="button" data-step="1" data-for="a-n2" aria-label="More teeth">+</button></div>
           </div>
         </div>
+        <div class="plist" id="a-plist" data-plist="a"></div>
 
         <div class="step"><span class="num">3</span><h2>Belt</h2></div>
         <div class="field">
@@ -121,6 +123,7 @@
             <div class="stepper"><button type="button" data-step="-1" data-for="b-n2" aria-label="Fewer teeth">−</button><input id="b-n2" type="number" inputmode="numeric" min="4" step="1" value="40" data-snap><button type="button" data-step="1" data-for="b-n2" aria-label="More teeth">+</button></div>
           </div>
         </div>
+        <div class="plist" id="b-plist" data-plist="b"></div>
 
         <div class="step"><span class="num">3</span><h2>Center distance</h2></div>
         <div class="field">
@@ -164,9 +167,7 @@
         <div class="seg" id="d-type"></div>
 
         <div class="step"><span class="num">2</span><h2>Pulley</h2></div>
-        <div class="units wide two" id="d-which" role="group" aria-label="Which pulley">
-          <button type="button" data-which="0" aria-pressed="true">P1 · left</button><button type="button" data-which="1" aria-pressed="false">P2 · right</button>
-        </div>
+        <div class="plist" id="d-plist" data-plist="d"></div>
         <label class="check"><input type="checkbox" id="d-link" checked><span>Follow the layout <em id="d-link-note">· teeth &amp; belt sync with the calculator</em></span></label>
         <div class="field">
           <label for="d-n">Teeth <span class="u">6 – 400</span></label>
@@ -653,9 +654,11 @@
 <script src="static/chain.js"></script>
 <script src="static/step.js"></script>
 <script src="static/calc.js"></script>
+<script src="static/drive.js"></script>
 <script src="static/motion.js"></script>
 <script src="static/api.js"></script>
 <script src="static/truesize.js"></script>
+<script src="static/drive-ui.js"></script>
 <script src="static/app.js"></script>
 
 </body>
