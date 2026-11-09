@@ -213,6 +213,7 @@ function frame(ts) {
     if (sc.chain) chainSceneTick(svg, ds); else sceneTick(svg, ds);
   }
   if (PAGE === 'belt' && spin3D(dt, ANIM.cur)) tweening = true;   // Pulley DXF & STEP tab: the 3D model turns too
+  backdropFrame(dt, ANIM.cur);                       // the ghost drive behind the page (backdrop.js)
   ANIM.raf = ANIM.playing || ANIM.cur > 0 || tweening ? requestAnimationFrame(frame) : 0;
   if (!ANIM.raf) ANIM.last = 0;
 }
@@ -980,6 +981,7 @@ function switchPage(name) {
   closeMenus();
   movePageInd();
   if (was !== name) {
+    backdropRipple(pagesEl.querySelector(`.page-t[data-page="${name}"]`));
     const t = document.querySelector(`#tabs-${name} .tab[aria-selected="true"]`);
     switchTab(t ? t.dataset.tab : TAB_ORDERS[name][0], true);   // re-render the visible tab, restore its hash
     moveInd(); updateInds();
@@ -1052,6 +1054,7 @@ function switchTab(name, instant) {
     updateInds();
     renderTab(name);
     if (name === 'dxf' && dir && !instant) kick3D();
+    if (dir && !instant) backdropRipple(document.querySelector(`#tabs-${pg} .tab[data-tab="${name}"]`));
   };
   if (!dir || instant || reduceMotion) { show(); return; }
   cur.style.setProperty('--lx', `${-dir * 24}px`);
@@ -2827,6 +2830,7 @@ function setUnit(u, save) {                               // save: the user swit
   const swap = (el, imp) => { if (el.dataset.mm == null) el.dataset.mm = el.textContent; rollTo(el, u === 'in' ? imp(el.dataset.mm) : el.dataset.mm); };
   document.querySelectorAll('[data-in]').forEach(el => swap(el, () => el.dataset.in));
   document.querySelectorAll('label .u:not([id])').forEach(el => swap(el, t => t.replace(/\bmm\b/, 'in')));
+  backdropRedraw();                                  // the ghost drive's C2C label
   renderA(); renderB(true); renderKA(); renderKB(true);
   renderTab((document.querySelector(`#tabs-${PAGE} .tab[aria-selected="true"]`) || {}).dataset?.tab);
   renderAlerts();

@@ -1,7 +1,7 @@
 /* Belt & Chain Calculator — all styles. Colour, motion and layout tokens are on :root at the top. */
 :root{
   --bg:#eceef1;
-  --grid:rgba(30,45,60,.055);
+  --grid:rgba(30,45,60,.055); --grid-2:rgba(30,45,60,.1);
   --panel:#ffffff;
   --panel-2:#f4f5f7;
   --ink:#13171c;
@@ -27,7 +27,7 @@
 }
 @media (prefers-color-scheme:dark){
   :root{
-    --bg:#0d1015; --grid:rgba(160,180,200,.045); --panel:#151920; --panel-2:#1b2028;
+    --bg:#0d1015; --grid:rgba(160,180,200,.045); --grid-2:rgba(160,180,200,.085); --panel:#151920; --panel-2:#1b2028;
     --ink:#e8ecf1; --ink-2:#a4aebb; --ink-3:#6c7785; --line:#29303a;
     --accent:#fb7a2e; --accent-2:#fd9758; --accent-soft:rgba(251,122,46,.13); --accent-edge:rgba(251,122,46,.4);
     --on-accent:#140a03;
@@ -50,6 +50,27 @@ body{
   background-size:24px 24px;
 }
 .wrap{max-width:1180px;margin:0 auto;padding:28px 16px 56px}
+/* backdrop (static/backdrop.js): fixed layers under the page. The grid fades toward the edges; the same grid in the
+   accent colour shows through a spotlight at the pointer (--x --y --o) and a ripple ring (--rx --ry --rr --ro);
+   the canvas holds the ghost drive. Without the script, the plain body grid above stays. */
+.has-backdrop body{background-image:none}
+.backdrop{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;--x:50vw;--y:30vh;--o:0;--rx:50vw;--ry:0px;--rr:0px;--ro:0}
+.bd{position:absolute;inset:0;width:100%;height:100%}
+.bd-grid,.bd-spot,.bd-ring{background-image:linear-gradient(var(--c1) 1px,transparent 1px),linear-gradient(90deg,var(--c1) 1px,transparent 1px),
+  linear-gradient(var(--c2) 1px,transparent 1px),linear-gradient(90deg,var(--c2) 1px,transparent 1px);
+  background-size:24px 24px,24px 24px,120px 120px,120px 120px}
+.bd-grid{--c1:var(--grid);--c2:var(--grid-2);
+  -webkit-mask-image:radial-gradient(ellipse 90% 85% at 50% 35%,#000 40%,rgba(0,0,0,.25) 100%);mask-image:radial-gradient(ellipse 90% 85% at 50% 35%,#000 40%,rgba(0,0,0,.25) 100%)}
+.bd-spot,.bd-ring{--c1:color-mix(in srgb,var(--accent) 22%,transparent);--c2:color-mix(in srgb,var(--accent) 45%,transparent)}
+.bd-spot{opacity:var(--o);-webkit-mask-image:radial-gradient(230px circle at var(--x) var(--y),#000,transparent 72%);mask-image:radial-gradient(230px circle at var(--x) var(--y),#000,transparent 72%)}
+.bd-ring{opacity:var(--ro);
+  -webkit-mask-image:radial-gradient(circle at var(--rx) var(--ry),transparent calc(var(--rr) - 110px),#000 calc(var(--rr) - 6px),transparent calc(var(--rr) + 28px));
+  mask-image:radial-gradient(circle at var(--rx) var(--ry),transparent calc(var(--rr) - 110px),#000 calc(var(--rr) - 6px),transparent calc(var(--rr) + 28px))}
+.bd-glow{opacity:var(--o);background:radial-gradient(320px circle at var(--x) var(--y),color-mix(in srgb,var(--accent) 6%,transparent),transparent 70%)}
+.bd-snap{position:absolute;left:-6px;top:-6px;width:13px;height:13px;opacity:calc(var(--o) * .85);transition:transform .18s var(--ease-out)}
+.bd-snap::before,.bd-snap::after{content:"";position:absolute;background:var(--accent)}
+.bd-snap::before{left:6px;top:0;width:1px;height:13px}.bd-snap::after{top:6px;left:0;width:13px;height:1px}
+@media print{.backdrop{display:none}}
 
 /* header */
 .top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
