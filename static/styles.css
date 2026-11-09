@@ -72,7 +72,15 @@ body{
 .bd-snap::before{left:6px;top:0;width:1px;height:13px}.bd-snap::after{top:6px;left:0;width:13px;height:1px}
 /* the ghost drive is "far away": its canvas is taller than the window by --bd-range and slides up by that much over the
    whole page scroll, driven by the browser's own scrolling (no script per frame, so it never trails the page) */
-.bd-ghost{height:calc(100% + var(--bd-range,0px));bottom:auto;will-change:transform}
+.bd-ghost{height:calc(100% + var(--bd-range,0px));bottom:auto;will-change:transform;fill:none;--gw:.12;--gb:.2}
+@media (prefers-color-scheme:dark){.bd-ghost{--gw:.1;--gb:.24}}
+.bd-ghost path{stroke-width:1;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.bd-ghost .w,.bd-ghost .r,.bd-ghost .pi,.bd-ghost .c,.bd-ghost .m{stroke:var(--ink);stroke-opacity:var(--gw)}
+.bd-ghost .pi{stroke-opacity:calc(var(--gw) + .02)}
+.bd-ghost .b{stroke:var(--accent);stroke-opacity:var(--gb);fill:var(--accent);fill-opacity:.045;fill-rule:evenodd}
+.bd-ghost .po{stroke:var(--accent);stroke-opacity:var(--gb)}
+.bd-ghost .c{stroke-dasharray:12 4 2 4}
+.bd-ghost text{fill:var(--ink);fill-opacity:calc(var(--gw) * 1.8);font:500 12px var(--mono)}
 @supports (animation-timeline:scroll()){
   .bd-ghost{animation:bd-depth linear both;animation-timeline:scroll(root block)}
   @keyframes bd-depth{to{transform:translateY(calc(-1 * var(--bd-range,0px)))}}
@@ -413,6 +421,19 @@ svg .belt-solid{fill:var(--accent);stroke:var(--belt-edge)}
 .asm-main .part{font:500 12px var(--mono);color:var(--ink-3);margin-left:8px;padding:2px 6px;border:1px solid var(--line);border-radius:6px;vertical-align:2px}
 .asm-sub{display:block;font:400 13px/1.5 var(--mono);color:var(--ink-2)}
 .asm-btns{display:flex;gap:8px;flex-wrap:wrap}
+/* gray until the pointer comes near (--near from app.js), orange on hover; a single click arms the button (a bar drains
+   along its bottom for the double-click time) and flashes the hint */
+.asm-btns .btn{--near:0;position:relative;overflow:hidden;touch-action:manipulation;background:var(--panel);
+  color:color-mix(in srgb,var(--accent) calc(var(--near) * 70%),var(--ink-2));
+  border-color:color-mix(in srgb,var(--accent) calc(var(--near) * 85%),var(--line));
+  box-shadow:0 0 0 calc(var(--near) * 3px) color-mix(in srgb,var(--accent) calc(var(--near) * 16%),transparent)}
+.asm-btns .btn:hover{background:var(--accent);border-color:var(--accent);color:var(--on-accent);box-shadow:0 6px 18px -8px var(--glow)}
+.asm-btns .btn::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;pointer-events:none}
+.asm-btns .btn:hover::after{background:var(--on-accent)}
+.asm-btns .btn.armed::after{animation:asmArm .5s linear forwards}
+@keyframes asmArm{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+.asm-hint.ping{animation:asmPing .9s var(--ease-out)}
+@keyframes asmPing{0%,35%{color:var(--accent);text-shadow:0 0 10px var(--glow)}}
 
 html.no-motion *,html.no-motion *::before,html.no-motion *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important}
 

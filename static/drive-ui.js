@@ -388,13 +388,9 @@ function driveAsmHTML(src, o) {
   if (!g || !g.valid) return '';
   const Nt = Math.round(g.L / o.belt.pitch);
   return `<div class="asm">
-      <div class="asm-top"><span class="pick-label">Belt &amp; assembly</span><span class="hint sans">from the ${src === 'b-svg' ? 'Belt length' : 'Center distance'} tab</span></div>
-      <div class="asm-main">${o.belt.label} · ${g.ps.map(p => `${p.N}T`).join(' + ')} · ${Nt}T belt<span class="part">${partNo(o.belt, Nt * o.belt.pitch, beltW(o.belt.key))}</span><span class="asm-sub" data-k="asm">C2C ${len(o.labelC, 3)}</span></div>
-      <div class="asm-btns">
-        <button type="button" class="btn primary icon" data-export="assembly" data-src="${src}">${ICON_ASM}Assembly</button>
-        <button type="button" class="btn icon" data-export="belt" data-src="${src}">${ICON_BELT}Belt only</button>
-        <button type="button" class="btn icon" data-export="pulleys" data-src="${src}">${ICON_PUL}Pulleys only</button>
-      </div>
+      ${asmTopHTML()}
+      <div class="asm-main">${o.belt.label} · ${g.ps.map(p => `${p.N}T`).join(' + ')} · ${Nt}T belt<span class="part">${partNo(o.belt, Nt * o.belt.pitch, beltW(o.belt.key))}</span><span class="asm-sub" data-k="asm">C2C ${len(o.labelC, 3)} · from the ${src === 'b-svg' ? 'Belt length' : 'Center distance'} tab</span></div>
+      ${asmBtnsHTML(src)}
     </div>`;
 }
 /* True size tab: the assembly at 1:1 → { ents, bo, layers, overD, set, notes } */

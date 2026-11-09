@@ -3,7 +3,8 @@
      with a small crosshair snapped to the nearest grid node;
    - a ripple that runs across the grid on tab and page switches (and on a click on the bare background);
    - a faint "ghost" drive in the margins: a timing belt on two pulleys or a roller chain on two sprockets, drawn with
-     the page's own geometry (true grooves, belt teeth, sprocket teeth, chain plates), meshed, with a C2C dimension.
+     the page's own geometry (true grooves, belt teeth, sprocket teeth, chain plates), meshed, with a C2C dimension,
+     as SVG animated like the layout previews (wheels turned by a transform, the belt path or the chain links moved).
      Everything about it is picked at random on every load: belt or chain, its type, tooth counts, size, placement,
      direction and hub style, so no two visits look the same.
    The drive turns on the page's animation loop (app.js frame() → backdropFrame), so Play / Pause and the speed slider
@@ -13,8 +14,8 @@
    Top-level names are shared with the other static/*.js files. */
 'use strict';
 
-const BD = { el: null, cv: null, g: null, dpr: 1, W: 0, H: 0, range: 0, d: null, lay: null, s: 0, raf: 0, drawQ: 0, parQ: 0,
-  spot: { tx: 0, ty: 0, x: 0, y: 0, o: 0, to: 0 }, ring: null, plates: null };
+const BD = { el: null, svg: null, els: null, W: 0, H: 0, range: 0, d: null, lay: null, s: 0, raf: 0, parQ: 0,
+  spot: { tx: 0, ty: 0, x: 0, y: 0, o: 0, to: 0 }, ring: null };
 const BD_SPEED = 26;                                 // belt speed at 1×, screen px per second
 const BD_DEPTH = 0.3;                                // scrolls at 30 % of the page speed (at most half a screen in all)
 const BD_SCROLL_TL = !!(window.CSS && CSS.supports && CSS.supports('animation-timeline: scroll()'));
@@ -67,111 +68,116 @@ function bdLayout() {
 /* how far the drive moves up over the whole scroll: BD_DEPTH of the page's scroll, at most half a screen */
 const bdRange = () => Math.round(Math.min(Math.max(0, document.documentElement.scrollHeight - innerHeight) * BD_DEPTH, BD.H * 0.5));
 
-/* ---- drawing (model space: wheel 1 at the origin, wheel 2 at (C, 0), y up, mm) ---- */
-function bdTrace(g, v) {                             // closed [x, y, bulge] polyline → current path
-  g.moveTo(v[0][0], v[0][1]);
+/* ---- drawing: SVG, animated the way the layout previews are. Model space (wheel 1 at the origin, wheel 2 at (C, 0),
+   y up, mm) sits in one group scaled to the window; each wheel is built once and only turned (rotate) per frame, the
+   belt is one path redrawn per frame, a chain is one element per link moved along the loop. Colours come from CSS. ---- */
+const bdN = v => Math.round(v * 1000) / 1000;
+function bdD(v) {                                    // closed [x, y, bulge] polyline → SVG path data (model space, no flip)
+  let s = `M${bdN(v[0][0])} ${bdN(v[0][1])}`;
   for (let i = 0; i < v.length; i++) {
     const [x0, y0, b] = v[i], [x1, y1] = v[(i + 1) % v.length];
-    if (!b) { g.lineTo(x1, y1); continue; }
-    const th = 4 * Math.atan(b), c = Math.hypot(x1 - x0, y1 - y0);
-    if (c < 1e-9) continue;
-    const k = c / 2 / Math.tan(th / 2), cx = (x0 + x1) / 2 - (y1 - y0) / c * k, cy = (y0 + y1) / 2 + (x1 - x0) / c * k;
-    g.arc(cx, cy, Math.hypot(x0 - cx, y0 - cy), Math.atan2(y0 - cy, x0 - cx), Math.atan2(y1 - cy, x1 - cx), th < 0);
+    if (!b) { s += `L${bdN(x1)} ${bdN(y1)}`; continue; }
+    const th = 4 * Math.atan(Math.abs(b)), r = Math.hypot(x1 - x0, y1 - y0) / (2 * Math.sin(th / 2));
+    s += `A${bdN(r)} ${bdN(r)} 0 ${th > Math.PI ? 1 : 0} ${b > 0 ? 1 : 0} ${bdN(x1)} ${bdN(y1)}`;
   }
-  g.closePath();
+  return s + 'Z';
 }
-function bdHub(g, R, h) {                            // hub, bore and lightening holes or spokes, inside the root circle
-  const ring = (r, x = 0, y = 0) => { g.moveTo(x + r, y); g.arc(x, y, r, 0, 2 * Math.PI); };
-  ring(R * 0.3);
-  if (h.bore === 'hex') { for (let i = 0; i <= 6; i++) { const t = i * Math.PI / 3, q = R * 0.11; i ? g.lineTo(q * Math.cos(t), q * Math.sin(t)) : g.moveTo(q, 0); } }
-  else { ring(R * 0.1); if (h.bore === 'key') g.rect(-R * 0.03, R * 0.085, R * 0.06, R * 0.05); }
+const bdCircle = (r, x = 0, y = 0) => `M${bdN(x + r)} ${bdN(y)}A${bdN(r)} ${bdN(r)} 0 1 1 ${bdN(x - r)} ${bdN(y)}A${bdN(r)} ${bdN(r)} 0 1 1 ${bdN(x + r)} ${bdN(y)}Z`;
+function bdHubD(R, h) {                              // hub, bore and lightening holes or spokes, inside the root circle
+  const P = (r, t) => `${bdN(r * Math.cos(t))} ${bdN(r * Math.sin(t))}`;
+  let s = bdCircle(R * 0.3);
+  if (h.bore === 'hex') s += `M${[0, 1, 2, 3, 4, 5].map(i => P(R * 0.11, i * Math.PI / 3)).join('L')}Z`;
+  else { s += bdCircle(R * 0.1); if (h.bore === 'key') s += `M${bdN(-R * 0.03)} ${bdN(R * 0.085)}h${bdN(R * 0.06)}v${bdN(R * 0.05)}h${bdN(-R * 0.06)}Z`; }
   if (h.style === 'holes') {
-    for (let i = 0; i < h.n; i++) { const t = (i + 0.5) * 2 * Math.PI / h.n; ring(R * 0.16 * Math.sqrt(4 / h.n), R * 0.57 * Math.cos(t), R * 0.57 * Math.sin(t)); }
+    for (let i = 0; i < h.n; i++) { const t = (i + 0.5) * 2 * Math.PI / h.n; s += bdCircle(R * 0.16 * Math.sqrt(4 / h.n), R * 0.57 * Math.cos(t), R * 0.57 * Math.sin(t)); }
   } else if (h.style === 'spokes') {                // windows between n spokes of constant width
     const ro = R * 0.72, ri = R * 0.4, w = R * 0.07, go = Math.asin(w / ro), gi = Math.asin(w / ri);
     for (let i = 0; i < h.n; i++) {
       const a0 = i * 2 * Math.PI / h.n, a1 = (i + 1) * 2 * Math.PI / h.n;
-      g.moveTo(ro * Math.cos(a0 + go), ro * Math.sin(a0 + go));
-      g.arc(0, 0, ro, a0 + go, a1 - go);
-      g.lineTo(ri * Math.cos(a1 - gi), ri * Math.sin(a1 - gi));
-      g.arc(0, 0, ri, a1 - gi, a0 + gi, true);
-      g.closePath();
+      s += `M${P(ro, a0 + go)}A${bdN(ro)} ${bdN(ro)} 0 0 1 ${P(ro, a1 - go)}L${P(ri, a1 - gi)}A${bdN(ri)} ${bdN(ri)} 0 0 0 ${P(ri, a0 + gi)}Z`;
     }
   }
+  return s;
 }
-function bdDraw() {
-  BD.drawQ = 0;
-  const { g, W, H, d, lay } = BD;
-  if (!g || !d || !lay) return;
-  const cs = getComputedStyle(document.documentElement), ink = cs.getPropertyValue('--ink').trim(), acc = cs.getPropertyValue('--accent').trim();
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches, k = lay.k, C = lay.C, s = BD.s;
-  g.setTransform(BD.dpr, 0, 0, BD.dpr, 0, 0);
-  g.clearRect(0, 0, W, H + BD.range);
-  // the drive in model space; the belt / chain moves s mm along its loop, the wheels turn meshed with it
-  let bo;
-  if (d.kind === 'belt') bo = beltOutline(d.belt, d.r1, d.r2, C, s);
-  else { const bp = beltPath(d.r1, d.r2, C), pe = d.pitch; bo = { bp, pe, n: lay.n, sOff: ((s % pe) + pe) % pe }; }
-  g.save();
-  g.translate(lay.P1[0], lay.P1[1]); g.rotate(lay.ang); g.scale(k, -k);
-  g.lineWidth = 1 / k; g.lineJoin = 'round';
-  g.strokeStyle = ink; g.globalAlpha = dark ? 0.1 : 0.12;
-  [[0, d.R1], [C, d.R2]].forEach(([x, R], j) => {
-    g.save(); g.translate(x, 0); g.rotate(pulleyPhase(bo, j + 1));
-    g.beginPath(); bdTrace(g, d.wheels[j].verts); bdHub(g, R, d.hubs[j]); g.restore();
-    g.stroke();
-  });
-  if (d.kind === 'belt') {
-    g.beginPath(); bdTrace(g, bo.outer); bdTrace(g, bo.inner);
-    g.fillStyle = acc; g.globalAlpha = dark ? 0.05 : 0.045; g.fill('evenodd');
-    g.strokeStyle = acc; g.globalAlpha = dark ? 0.24 : 0.2; g.stroke();
-  } else {
-    const ch = d.ch, pins = [];
-    for (let i = 0; i < bo.n; i++) pins.push(pathAt(bo.bp, bo.sOff + i * bo.pe).p);
-    if (!BD.plates || BD.plates.ch !== ch) BD.plates = { ch, I: plateLoop(ch.p, ch.hI, null), O: plateLoop(ch.p, ch.hO, null) };
-    const plates = odd => {                          // one plate per link, stretched to the pin-to-pin chord
-      g.beginPath();
-      for (let i = odd; i < pins.length; i += 2) {
-        const a = pins[i], b = pins[(i + 1) % pins.length], dx = b[0] - a[0], dy = b[1] - a[1];
-        g.save(); g.translate(a[0], a[1]); g.rotate(Math.atan2(dy, dx)); g.scale(Math.hypot(dx, dy) / ch.p, 1);
-        bdTrace(g, odd ? BD.plates.I : BD.plates.O); g.restore();
-      }
-    };
-    plates(1); g.strokeStyle = ink; g.globalAlpha = dark ? 0.12 : 0.14; g.stroke();
-    g.beginPath();
-    for (const [x, y] of pins) { g.moveTo(x + ch.d1 / 2, y); g.arc(x, y, ch.d1 / 2, 0, 2 * Math.PI); g.moveTo(x + ch.d2 / 2, y); g.arc(x, y, ch.d2 / 2, 0, 2 * Math.PI); }
-    g.stroke();
-    plates(0); g.strokeStyle = acc; g.globalAlpha = dark ? 0.24 : 0.2; g.stroke();
-  }
-  g.restore();
-  // centre line, centre marks and the drive's name + C2C, sketch style, in screen space
-  const [x1, y1] = lay.P1, [x2, y2] = lay.P2;
-  g.save();
-  g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 1; g.globalAlpha = dark ? 0.1 : 0.12;
-  g.setLineDash([12, 4, 2, 4]); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.setLineDash([]);
-  g.beginPath(); for (const [x, y] of [lay.P1, lay.P2]) { g.moveTo(x - 9, y); g.lineTo(x + 9, y); g.moveTo(x, y - 9); g.lineTo(x, y + 9); } g.stroke();
+const bdLabel = () => {
+  const d = BD.d, lay = BD.lay;
+  return `${d.kind === 'belt' ? `${d.belt.label} · ${d.n1}T + ${d.n2}T · ${lay.n}T belt` : `${d.ch.code} · ${d.n1}T + ${d.n2}T · ${lay.n} links`} · C2C ${len(lay.C, 1)}`;
+};
+/* (re)build the drawing for this window: called on load, resize and a new parallax range */
+function bdBuild() {
+  const { svg, d, lay, W, H } = BD;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H + BD.range}`);
+  BD.els = null;
+  if (!d || !lay) { svg.innerHTML = ''; return; }
+  const k = lay.k, deg = r => bdN(r * 180 / Math.PI), [x1, y1] = lay.P1, [x2, y2] = lay.P2;
   let a = lay.ang;
-  if (a > Math.PI / 2 || a < -Math.PI / 2) a += Math.PI;   // keep the text upright
-  g.translate((x1 + x2) / 2, (y1 + y2) / 2); g.rotate(a);
-  g.globalAlpha = dark ? 0.2 : 0.22; g.font = '500 12px "IBM Plex Mono", ui-monospace, monospace'; g.textAlign = 'center';
-  g.fillText(`${d.kind === 'belt' ? `${d.belt.label} · ${d.n1}T + ${d.n2}T · ${lay.n}T belt` : `${d.ch.code} · ${d.n1}T + ${d.n2}T · ${lay.n} links`} · C2C ${len(C, 1)}`, 0, -9);
-  g.restore();
+  if (a > Math.PI / 2 || a < -Math.PI / 2) a += Math.PI;   // keep the label upright
+  const wheel = (x, j, R) => `<g transform="translate(${bdN(x)} 0)"><g class="bd-spin"><path class="w" d="${bdD(d.wheels[j].verts)}${bdHubD(R, d.hubs[j])}"/></g></g>`;
+  let links = '';
+  if (d.kind === 'chain') {                          // inner links first, so the outer plates lie on top
+    const ch = d.ch, pi = bdD(plateLoop(ch.p, ch.hI, null)), po = bdD(plateLoop(ch.p, ch.hO, null)), roll = bdCircle(ch.d1 / 2) + bdCircle(ch.d2 / 2);
+    const link = i => `<g data-l="${i}"><path class="${i % 2 ? 'pi' : 'po'}" d="${i % 2 ? pi : po}"/><path class="r" d="${roll}"/></g>`;
+    for (let i = 1; i < lay.n; i += 2) links += link(i);
+    for (let i = 0; i < lay.n; i += 2) links += link(i);
+  }
+  svg.innerHTML = `<g transform="translate(${bdN(x1)} ${bdN(y1)}) rotate(${deg(lay.ang)}) scale(${bdN(k)} ${bdN(-k)})">`
+    + wheel(0, 0, d.R1) + wheel(lay.C, 1, d.R2)
+    + (d.kind === 'belt' ? '<path class="b"/>' : `<g class="bd-chain">${links}</g>`) + '</g>'
+    + `<path class="c" d="M${bdN(x1)} ${bdN(y1)}L${bdN(x2)} ${bdN(y2)}"/>`
+    + `<path class="m" d="${[lay.P1, lay.P2].map(([x, y]) => `M${bdN(x - 9)} ${bdN(y)}h18M${bdN(x)} ${bdN(y - 9)}v18`).join('')}"/>`
+    + `<text transform="translate(${bdN((x1 + x2) / 2)} ${bdN((y1 + y2) / 2)}) rotate(${deg(a)})" y="-9" text-anchor="middle">${escT(bdLabel())}</text>`;
+  BD.els = { spin: svg.querySelectorAll('.bd-spin'), belt: svg.querySelector('.b'), text: svg.querySelector('text'),
+    links: [...svg.querySelectorAll('g[data-l]')].map(g => ({ el: g, k: +g.dataset.l })) };
+  BD.psi = [NaN, NaN]; BD.psiS = null;                // wheel angles start over from the meshed ones
+  bdTick();
 }
-const backdropRedraw = () => { if (BD.g && !BD.drawQ) BD.drawQ = requestAnimationFrame(bdDraw); };
+/* one frame: the belt / chain at travel s mm along its loop, the wheels turned to mesh with it */
+function bdTick() {
+  const { d, lay, els } = BD;
+  if (!els) return;
+  const s = BD.s, deg = r => bdN(r * 180 / Math.PI);
+  let bo;
+  if (d.kind === 'belt') {
+    bo = beltOutline(d.belt, d.r1, d.r2, lay.C, s);
+    els.belt.setAttribute('d', bdD(bo.outer) + bdD(bo.inner));
+  } else {
+    // wrap over the whole loop, not one pitch: links alternate inner / outer, so a per-pitch wrap would hand every
+    // link to its neighbour's place (and swap the plate layers) once per pitch
+    const bp = beltPath(d.r1, d.r2, lay.C), L = lay.n * d.pitch, sOff = ((s % L) + L) % L, pins = new Array(lay.n);
+    for (let i = 0; i < lay.n; i++) pins[i] = pathAt(bp, sOff + i * d.pitch).p;
+    for (const { el, k } of els.links) {
+      const p = pins[k], q = pins[(k + 1) % lay.n];
+      el.setAttribute('transform', `translate(${bdN(p[0])} ${bdN(p[1])}) rotate(${deg(Math.atan2(q[1] - p[1], q[0] - p[0]))})`);
+    }
+    bo = { bp, pe: d.pitch, sOff };
+  }
+  // like the layout previews (sceneTick): carry each wheel on by the travel, then take the meshed angle nearest to that.
+  // The meshed angle alone jumps a whole tooth whenever another tooth reaches mid-wrap: invisible on the teeth, but
+  // the spokes, holes and keyway would jump with it.
+  const ds = BD.psiS == null ? 0 : s - BD.psiS;
+  BD.psiS = s;
+  els.spin.forEach((el, j) => {
+    const step = 2 * Math.PI / (j ? d.n2 : d.n1), A = pulleyPhase(bo, j + 1), prev = BD.psi[j];
+    const pred = Number.isFinite(prev) ? prev + ds / (j ? d.r2 : d.r1) : A;
+    BD.psi[j] = A + step * Math.round((pred - A) / step);
+    el.setAttribute('transform', `rotate(${deg(BD.psi[j]) % 360})`);
+  });
+}
+const backdropRedraw = () => { if (BD.els) BD.els.text.textContent = bdLabel(); };   // the label's unit (mm / in)
 
-/* per animation frame (app.js frame()): move the belt / chain at the layouts' speed and redraw (~0.5 ms), every frame,
-   so it moves evenly at any refresh rate */
+/* per animation frame (app.js frame()): move the belt / chain at the layouts' speed */
 function backdropFrame(dt, speed) {
-  if (!BD.d || !BD.lay || !dt) return;
+  if (!BD.els || !dt) return;
   BD.s += BD.d.dir * BD_SPEED * speed * dt / BD.lay.k;
-  bdDraw();
+  bdTick();
 }
 
-/* parallax: the canvas is taller than the window by BD.range and moves up by that much over the whole scroll. Where the
+/* parallax: the drawing is taller than the window by BD.range and moves up by that much over the whole scroll. Where the
    browser has scroll-driven animations, CSS does it on the compositor (styles.css .bd-ghost); elsewhere, this. */
 function bdParallax() {
   BD.parQ = 0;
   const max = document.documentElement.scrollHeight - innerHeight, y = reduceMotion || max <= 0 ? 0 : BD.range * Math.min(1, scrollY / max);
-  BD.cv.style.transform = `translate3d(0, ${-Math.round(y * BD.dpr) / BD.dpr}px, 0)`;
+  BD.svg.style.transform = `translate3d(0, ${-Math.round(y * (devicePixelRatio || 1)) / (devicePixelRatio || 1)}px, 0)`;
 }
 
 /* ---- spotlight and ripple: their own short animation, only while they move ---- */
@@ -202,29 +208,26 @@ function backdropRipple(at) {
 
 /* ---- set-up ---- */
 function bdSize() {
-  BD.dpr = Math.min(1.5, devicePixelRatio || 1);
   BD.W = innerWidth; BD.H = innerHeight; BD.range = bdRange();
   BD.el.style.setProperty('--bd-range', `${BD.range}px`);
-  BD.cv.width = Math.round(BD.W * BD.dpr); BD.cv.height = Math.round((BD.H + BD.range) * BD.dpr);
   BD.lay = BD.d && bdLayout();
+  bdBuild();
   if (!BD_SCROLL_TL) bdParallax();
 }
 function backdropInit() {
   const el = document.createElement('div');
   el.className = 'backdrop'; el.setAttribute('aria-hidden', 'true');
-  el.innerHTML = '<div class="bd bd-grid"></div><canvas class="bd bd-ghost"></canvas><div class="bd bd-glow"></div>'
+  el.innerHTML = '<div class="bd bd-grid"></div><svg class="bd bd-ghost"></svg><div class="bd bd-glow"></div>'
     + '<div class="bd bd-spot"></div><div class="bd bd-ring"></div><span class="bd-snap"></span>';
   document.body.prepend(el);
   document.documentElement.classList.add('has-backdrop');
-  Object.assign(BD, { el, cv: el.querySelector('canvas'), snap: el.querySelector('.bd-snap') });
-  BD.g = BD.cv.getContext('2d');
+  Object.assign(BD, { el, svg: el.querySelector('svg'), snap: el.querySelector('.bd-snap') });
   BD.d = bdRandom();
   bdSize();
-  addEventListener('resize', () => { bdSize(); bdDraw(); });
+  addEventListener('resize', bdSize);
   // the page grows or shrinks (another tab, more pulleys): a new parallax range, so the depth stays the same
-  new ResizeObserver(() => { if (bdRange() !== BD.range) { bdSize(); bdDraw(); } }).observe(document.body);
+  new ResizeObserver(() => { if (bdRange() !== BD.range) bdSize(); }).observe(document.body);
   if (!BD_SCROLL_TL) addEventListener('scroll', () => { if (!BD.parQ) BD.parQ = requestAnimationFrame(bdParallax); }, { passive: true });
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', backdropRedraw);
   document.addEventListener('pointermove', e => {
     const sp = BD.spot;
     if (reduceMotion || e.pointerType === 'touch') { if (sp.to) { sp.to = 0; bdKick(); } return; }
@@ -235,6 +238,5 @@ function backdropInit() {
   document.addEventListener('pointerdown', e => {    // a click on the bare background (between and around the cards)
     if (e.button === 0 && (e.target === document.body || e.target.matches('.wrap, .page, .panel, .layout, .top, .brand'))) backdropRipple({ x: e.clientX, y: e.clientY });
   });
-  bdDraw();
 }
 backdropInit();

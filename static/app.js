@@ -1121,13 +1121,9 @@ function asmHTML() {
   if (!o || !(o.g.gap > 0)) return '';
   const Nt = Math.round(beltLength(o.labelC, o.g.r1, o.g.r2) / o.belt.pitch);
   return `<div class="asm">
-      <div class="asm-top"><span class="pick-label">Belt &amp; assembly</span><span class="hint sans">from the ${lastCalc === 'length' ? 'Belt length' : 'Center distance'} tab</span></div>
-      <div class="asm-main">${o.belt.label} · ${o.N1}T + ${o.N2}T · ${Nt}T belt<span class="part">${partNo(o.belt, Nt * o.belt.pitch, beltW(o.belt.key))}</span><span class="asm-sub" data-k="asm">C2C ${len(o.labelC, 3)}</span></div>
-      <div class="asm-btns">
-        <button type="button" class="btn primary icon" data-export="assembly" data-src="${src}">${ICON_ASM}Assembly</button>
-        <button type="button" class="btn icon" data-export="belt" data-src="${src}">${ICON_BELT}Belt only</button>
-        <button type="button" class="btn icon" data-export="pulleys" data-src="${src}">${ICON_PUL}Pulleys only</button>
-      </div>
+      ${asmTopHTML()}
+      <div class="asm-main">${o.belt.label} · ${o.N1}T + ${o.N2}T · ${Nt}T belt<span class="part">${partNo(o.belt, Nt * o.belt.pitch, beltW(o.belt.key))}</span><span class="asm-sub" data-k="asm">C2C ${len(o.labelC, 3)} · from the ${lastCalc === 'length' ? 'Belt length' : 'Center distance'} tab</span></div>
+      ${asmBtnsHTML(src)}
     </div>`;
 }
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
@@ -1288,10 +1284,51 @@ $('d-results').addEventListener('click', e => {
   }, { name: doc.name });
 });
 
+/* Belt & assembly block (asmHTML, driveAsmHTML): gray buttons that warm up to the accent colour as the pointer comes
+   near (--near, 0 … 1) and fill with it on hover. They download on a double click: a single click only arms the button
+   for ASM_DBL ms (a bar drains along its bottom edge, the hint flashes), so a stray click never saves a file. Enter /
+   Space (click with detail 0) download at once; on touch screens a double tap does it. */
+const ASM_DBL = 500;                                  // ms, the usual system double-click time
+const asmTopHTML = () => '<div class="asm-top"><span class="pick-label">Belt &amp; assembly</span><span class="hint sans asm-hint">double-click to download</span></div>';
+const asmBtnsHTML = src => `<div class="asm-btns">${[['assembly', ICON_ASM, 'Assembly'], ['belt', ICON_BELT, 'Belt only'], ['pulleys', ICON_PUL, 'Pulleys only']]
+  .map(([w, icon, t]) => `<button type="button" class="btn icon" data-export="${w}" data-src="${src}" title="Double-click to download">${icon}${t}</button>`).join('')}</div>`;
+let asmTap = null, asmPt = null, asmNearQ = 0;
+function asmClick(item, e) {
+  const key = `${item.dataset.src}|${item.dataset.export}`, now = performance.now();
+  if (e.detail === 0 || (asmTap && asmTap.key === key && now - asmTap.t < ASM_DBL)) {
+    asmTap = null; item.classList.remove('armed');
+    exportLayout(item.dataset.src, item.dataset.export);
+    return;
+  }
+  asmTap = { key, t: now };
+  document.querySelectorAll('.asm-btns .armed').forEach(b => b.classList.remove('armed'));
+  void item.offsetWidth; item.classList.add('armed');
+  clearTimeout(item._arm); item._arm = setTimeout(() => item.classList.remove('armed'), ASM_DBL);
+  const hint = item.closest('.asm').querySelector('.asm-hint');
+  if (hint) { hint.classList.remove('ping'); void hint.offsetWidth; hint.classList.add('ping'); }
+}
+function asmNear() {                                  // 1 on the button, fading to 0 at 110 px away
+  asmNearQ = 0;
+  document.querySelectorAll('.asm-btns .btn').forEach(b => {
+    let n = 0;
+    if (asmPt && b.offsetParent) {
+      const r = b.getBoundingClientRect(), dx = Math.max(r.left - asmPt[0], 0, asmPt[0] - r.right), dy = Math.max(r.top - asmPt[1], 0, asmPt[1] - r.bottom);
+      n = Math.max(0, 1 - Math.hypot(dx, dy) / 110) ** 2;
+    }
+    b.style.setProperty('--near', n.toFixed(3));
+  });
+}
+document.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;
+  asmPt = [e.clientX, e.clientY];
+  if (!asmNearQ) asmNearQ = requestAnimationFrame(asmNear);
+}, { passive: true });
+document.documentElement.addEventListener('pointerleave', () => { asmPt = null; if (!asmNearQ) asmNearQ = requestAnimationFrame(asmNear); });
+
 // export menus + assembly buttons
 document.addEventListener('click', e => {
   const item = e.target.closest('[data-export]');
-  if (item) { closeMenus(); exportLayout(item.dataset.src, item.dataset.export); return; }
+  if (item) { closeMenus(); if (item.closest('.asm')) asmClick(item, e); else exportLayout(item.dataset.src, item.dataset.export); return; }
   const btn = e.target.closest('[data-menu-btn]');
   if (btn) {
     const pop = btn.nextElementSibling, open = pop.hidden || pop._closing;
