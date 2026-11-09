@@ -70,6 +70,14 @@ body{
 .bd-snap{position:absolute;left:-6px;top:-6px;width:13px;height:13px;opacity:calc(var(--o) * .85);transition:transform .18s var(--ease-out)}
 .bd-snap::before,.bd-snap::after{content:"";position:absolute;background:var(--accent)}
 .bd-snap::before{left:6px;top:0;width:1px;height:13px}.bd-snap::after{top:6px;left:0;width:13px;height:1px}
+/* the ghost drive is "far away": its canvas is taller than the window by --bd-range and slides up by that much over the
+   whole page scroll, driven by the browser's own scrolling (no script per frame, so it never trails the page) */
+.bd-ghost{height:calc(100% + var(--bd-range,0px));bottom:auto;will-change:transform}
+@supports (animation-timeline:scroll()){
+  .bd-ghost{animation:bd-depth linear both;animation-timeline:scroll(root block)}
+  @keyframes bd-depth{to{transform:translateY(calc(-1 * var(--bd-range,0px)))}}
+}
+.no-motion .bd-ghost{animation:none;transform:none}
 @media print{.backdrop{display:none}}
 
 /* header */

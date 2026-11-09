@@ -7,14 +7,17 @@
      Everything about it is picked at random on every load: belt or chain, its type, tooth counts, size, placement,
      direction and hub style, so no two visits look the same.
    The drive turns on the page's animation loop (app.js frame() → backdropFrame), so Play / Pause and the speed slider
-   drive it like the layouts; with Animations off nothing moves. Loaded after the geometry and motion files, before app.js.
+   drive it like the layouts; with Animations off nothing moves. It sits "far behind" the cards: when the page scrolls it
+   follows at a fraction of the speed (parallax), moved by the browser's own scrolling (a scroll-driven CSS animation),
+   so it glides with the page instead of trailing it. Loaded after the geometry and motion files, before app.js.
    Top-level names are shared with the other static/*.js files. */
 'use strict';
 
-const BD = { el: null, cv: null, g: null, dpr: 1, W: 0, H: 0, d: null, lay: null, s: 0, acc: 0, raf: 0, drawQ: 0,
+const BD = { el: null, cv: null, g: null, dpr: 1, W: 0, H: 0, range: 0, d: null, lay: null, s: 0, raf: 0, drawQ: 0, parQ: 0,
   spot: { tx: 0, ty: 0, x: 0, y: 0, o: 0, to: 0 }, ring: null, plates: null };
 const BD_SPEED = 26;                                 // belt speed at 1×, screen px per second
-const BD_FPS = 1 / 30;                               // the ghost is slow and faint: 30 frames a second is plenty
+const BD_DEPTH = 0.3;                                // scrolls at 30 % of the page speed (at most half a screen in all)
+const BD_SCROLL_TL = !!(window.CSS && CSS.supports && CSS.supports('animation-timeline: scroll()'));
 
 /* ---- a new drive, all at random ---- */
 function bdRandom() {
@@ -34,6 +37,7 @@ function bdRandom() {
     d.R1 = pitchDia(d.n1, d.belt.pitch) / 2; d.R2 = pitchDia(d.n2, d.belt.pitch) / 2;
     d.wheels = [pulleyOutline(d.belt, d.n1, 0), pulleyOutline(d.belt, d.n2, 0)];
     d.out = d.belt.thick;                            // how far the belt reaches past the pitch circles
+    d.pitch = d.belt.pitch; d.r1 = d.R1; d.r2 = d.R2;   // the loop runs on the pitch circles
   } else {
     d.kind = 'chain';
     d.ch = CHAINS[pick(['A25', 'A35', 'A40', 'A40', 'A50', 'A60', 'B08', 'B10', 'M420', 'M520', 'K8'])];
@@ -41,19 +45,27 @@ function bdRandom() {
     d.R1 = sprR(d.ch.p, d.n1); d.R2 = sprR(d.ch.p, d.n2);
     d.wheels = [sprocketOutline(d.ch, d.n1, 0), sprocketOutline(d.ch, d.n2, 0)];
     d.out = d.ch.hO / 2;
+    // rollers move one pitch of arc per tooth gap, so on the wraps they run on z·p / 2π (a hair inside the pitch circle,
+    // where the chord would be p): they stay seated in the gaps while the sprockets turn smoothly, with no ticks
+    d.pitch = d.ch.p; d.r1 = d.n1 * d.ch.p / (2 * Math.PI); d.r2 = d.n2 * d.ch.p / (2 * Math.PI);
   }
   return d.wheels.some(w => w.error) ? bdRandom() : d;
 }
-/* where the drive sits in this window: centres in px, scale k (px per mm), C2C in mm */
+/* where the drive sits in this window: centres in px, scale k (px per mm), C2C in mm. The C2C is the one of a whole
+   number n of belt teeth / chain links (the largest that fits), so every tooth meets a groove and nothing ticks. */
 function bdLayout() {
   const d = BD.d, W = BD.W, H = BD.H, [a, b, c, e] = d.f;
   const mx = d.corner & 1, my = d.corner & 2, X = u => (mx ? 1 - u : u) * W, Y = v => (my ? 1 - v : v) * H;
   const P1 = d.side ? [X(a * 0.6), Y(b)] : [X(a), Y(b)];
-  const P2 = d.side ? [X(a * 0.6 + c * 0.25), Y(e)] : [X(1 - c), Y(e)];
-  const dist = Math.hypot(P2[0] - P1[0], P2[1] - P1[1]);
+  const Q = d.side ? [X(a * 0.6 + c * 0.25), Y(e)] : [X(1 - c), Y(e)];
+  const dist = Math.hypot(Q[0] - P1[0], Q[1] - P1[1]), ang = Math.atan2(Q[1] - P1[1], Q[0] - P1[0]);
   const k = Math.max(0.05, Math.min(d.size * (d.side ? 0.7 : 1) * Math.min(W, H) / d.R1, (dist - 24) / (d.R1 + d.R2 + 2 * d.out)));
-  return { P1, P2, k, C: dist / k, ang: Math.atan2(P2[1] - P1[1], P2[0] - P1[0]) };
+  const n = Math.floor(beltLength(dist / k, d.r1, d.r2) / d.pitch), C = n >= 3 ? solveCenter(n * d.pitch, d.r1, d.r2) : NaN;
+  if (!(W > 40 && H > 40 && Number.isFinite(C))) return null;   // no window yet (e.g. a hidden frame): draw nothing
+  return { P1, P2: [P1[0] + Math.cos(ang) * C * k, P1[1] + Math.sin(ang) * C * k], k, C, n, ang };
 }
+/* how far the drive moves up over the whole scroll: BD_DEPTH of the page's scroll, at most half a screen */
+const bdRange = () => Math.round(Math.min(Math.max(0, document.documentElement.scrollHeight - innerHeight) * BD_DEPTH, BD.H * 0.5));
 
 /* ---- drawing (model space: wheel 1 at the origin, wheel 2 at (C, 0), y up, mm) ---- */
 function bdTrace(g, v) {                             // closed [x, y, bulge] polyline → current path
@@ -92,15 +104,15 @@ function bdDraw() {
   const { g, W, H, d, lay } = BD;
   if (!g || !d || !lay) return;
   const cs = getComputedStyle(document.documentElement), ink = cs.getPropertyValue('--ink').trim(), acc = cs.getPropertyValue('--accent').trim();
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches, k = lay.k, C = lay.C, s = BD.s, py = -scrollY * 0.15;
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches, k = lay.k, C = lay.C, s = BD.s;
   g.setTransform(BD.dpr, 0, 0, BD.dpr, 0, 0);
-  g.clearRect(0, 0, W, H);
+  g.clearRect(0, 0, W, H + BD.range);
   // the drive in model space; the belt / chain moves s mm along its loop, the wheels turn meshed with it
   let bo;
-  if (d.kind === 'belt') bo = beltOutline(d.belt, d.R1, d.R2, C, s);
-  else { const bp = beltPath(d.R1, d.R2, C), n = Math.max(6, Math.round(bp.L / d.ch.p)), pe = bp.L / n; bo = { bp, pe, n, sOff: ((s % pe) + pe) % pe }; }
+  if (d.kind === 'belt') bo = beltOutline(d.belt, d.r1, d.r2, C, s);
+  else { const bp = beltPath(d.r1, d.r2, C), pe = d.pitch; bo = { bp, pe, n: lay.n, sOff: ((s % pe) + pe) % pe }; }
   g.save();
-  g.translate(lay.P1[0], lay.P1[1] + py); g.rotate(lay.ang); g.scale(k, -k);
+  g.translate(lay.P1[0], lay.P1[1]); g.rotate(lay.ang); g.scale(k, -k);
   g.lineWidth = 1 / k; g.lineJoin = 'round';
   g.strokeStyle = ink; g.globalAlpha = dark ? 0.1 : 0.12;
   [[0, d.R1], [C, d.R2]].forEach(([x, R], j) => {
@@ -133,7 +145,7 @@ function bdDraw() {
   g.restore();
   // centre line, centre marks and the drive's name + C2C, sketch style, in screen space
   const [x1, y1] = lay.P1, [x2, y2] = lay.P2;
-  g.save(); g.translate(0, py);
+  g.save();
   g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 1; g.globalAlpha = dark ? 0.1 : 0.12;
   g.setLineDash([12, 4, 2, 4]); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.setLineDash([]);
   g.beginPath(); for (const [x, y] of [lay.P1, lay.P2]) { g.moveTo(x - 9, y); g.lineTo(x + 9, y); g.moveTo(x, y - 9); g.lineTo(x, y + 9); } g.stroke();
@@ -141,17 +153,25 @@ function bdDraw() {
   if (a > Math.PI / 2 || a < -Math.PI / 2) a += Math.PI;   // keep the text upright
   g.translate((x1 + x2) / 2, (y1 + y2) / 2); g.rotate(a);
   g.globalAlpha = dark ? 0.2 : 0.22; g.font = '500 12px "IBM Plex Mono", ui-monospace, monospace'; g.textAlign = 'center';
-  g.fillText(`${d.kind === 'belt' ? d.belt.label : d.ch.code} · ${d.n1}T + ${d.n2}T · C2C ${len(C, 1)}`, 0, -9);
+  g.fillText(`${d.kind === 'belt' ? `${d.belt.label} · ${d.n1}T + ${d.n2}T · ${lay.n}T belt` : `${d.ch.code} · ${d.n1}T + ${d.n2}T · ${lay.n} links`} · C2C ${len(C, 1)}`, 0, -9);
   g.restore();
 }
 const backdropRedraw = () => { if (BD.g && !BD.drawQ) BD.drawQ = requestAnimationFrame(bdDraw); };
 
-/* per animation frame (app.js frame()): move the belt / chain at the layouts' speed, redraw at 30 fps */
+/* per animation frame (app.js frame()): move the belt / chain at the layouts' speed and redraw (~0.5 ms), every frame,
+   so it moves evenly at any refresh rate */
 function backdropFrame(dt, speed) {
   if (!BD.d || !BD.lay || !dt) return;
   BD.s += BD.d.dir * BD_SPEED * speed * dt / BD.lay.k;
-  BD.acc += dt;
-  if (BD.acc >= BD_FPS) { BD.acc = 0; bdDraw(); }
+  bdDraw();
+}
+
+/* parallax: the canvas is taller than the window by BD.range and moves up by that much over the whole scroll. Where the
+   browser has scroll-driven animations, CSS does it on the compositor (styles.css .bd-ghost); elsewhere, this. */
+function bdParallax() {
+  BD.parQ = 0;
+  const max = document.documentElement.scrollHeight - innerHeight, y = reduceMotion || max <= 0 ? 0 : BD.range * Math.min(1, scrollY / max);
+  BD.cv.style.transform = `translate3d(0, ${-Math.round(y * BD.dpr) / BD.dpr}px, 0)`;
 }
 
 /* ---- spotlight and ripple: their own short animation, only while they move ---- */
@@ -183,9 +203,11 @@ function backdropRipple(at) {
 /* ---- set-up ---- */
 function bdSize() {
   BD.dpr = Math.min(1.5, devicePixelRatio || 1);
-  BD.W = innerWidth; BD.H = innerHeight;
-  BD.cv.width = Math.round(BD.W * BD.dpr); BD.cv.height = Math.round(BD.H * BD.dpr);
+  BD.W = innerWidth; BD.H = innerHeight; BD.range = bdRange();
+  BD.el.style.setProperty('--bd-range', `${BD.range}px`);
+  BD.cv.width = Math.round(BD.W * BD.dpr); BD.cv.height = Math.round((BD.H + BD.range) * BD.dpr);
   BD.lay = BD.d && bdLayout();
+  if (!BD_SCROLL_TL) bdParallax();
 }
 function backdropInit() {
   const el = document.createElement('div');
@@ -199,7 +221,9 @@ function backdropInit() {
   BD.d = bdRandom();
   bdSize();
   addEventListener('resize', () => { bdSize(); bdDraw(); });
-  addEventListener('scroll', backdropRedraw, { passive: true });        // parallax
+  // the page grows or shrinks (another tab, more pulleys): a new parallax range, so the depth stays the same
+  new ResizeObserver(() => { if (bdRange() !== BD.range) { bdSize(); bdDraw(); } }).observe(document.body);
+  if (!BD_SCROLL_TL) addEventListener('scroll', () => { if (!BD.parQ) BD.parQ = requestAnimationFrame(bdParallax); }, { passive: true });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', backdropRedraw);
   document.addEventListener('pointermove', e => {
     const sp = BD.spot;
