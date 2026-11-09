@@ -1,4 +1,4 @@
-/* Belt & Chain Calculator — STEP (ISO 10303-21, AP214) writer for chains and sprockets. Pure computing, no DOM.
+/* Belt & Chain Calculator — STEP (ISO 10303-21, AP214) writer for chains, sprockets and pulleys. Pure computing, no DOM.
    Loaded as a classic script (works from file:// too); top-level names are shared with the other static/*.js files. */
 'use strict';
 
@@ -84,7 +84,8 @@ function stepFile(title, bodies) {
   const su = A('(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())');
   const um = A(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#${lu},'distance_accuracy_value','confusion accuracy')`);
   const ctx = A(`(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${um}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#${lu},#${au},#${su}))REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY'))`);
-  const solids = bodies.map(b => ({ id: stepExtrude(W, b.name, b.loops, b.z0, b.z1), color: b.color }));
+  // a body is an extrusion (loops, z0, z1), or brings its own B-rep builder: solid(W) → solid id (pulley3d.js)
+  const solids = bodies.map(b => ({ id: b.solid ? b.solid(W) : stepExtrude(W, b.name, b.loops, b.z0, b.z1), color: b.color }));
   const origin = W.ax3([0, 0, 0], [0, 0, 1], [1, 0, 0]);
   const rep = A(`ADVANCED_BREP_SHAPE_REPRESENTATION('${t}',(#${origin},${solids.map(s => '#' + s.id).join(',')}),#${ctx})`);
   A(`SHAPE_DEFINITION_REPRESENTATION(#${pds},#${rep})`);

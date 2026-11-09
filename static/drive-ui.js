@@ -331,6 +331,8 @@ function driveIdlerD(belt, N, st, fail) {
   const notes = [['info', `Backside idler: a smooth roller that runs on the belt back and turns the other way. Rim Ø = belt pitch-line Ø (teeth × pitch / π) − 2 × ${lenR(+beltBack(belt).toFixed(4))} (pitch line to belt back).`]];
   if (d.flR) notes.push(['info', 'Flange disc is placed beside the roller as a separate part (FLANGE layer), with the same bore and holes.']);
   if (st.clear) notes.push(['info', `Bore clearance ${sgnL(st.clear, 2)} per side — the bore is cut at ${len(st.boreSize, 3)}.`]);
+  const b3 = pulleyBuild();                         // the roller as a STEP solid, with its rims (pulley3d-ui.js)
+  notes.push(...rimNotes(b3));
   res.innerHTML = `
     <div class="hero">
       <div class="hero-label" data-k="hl">Pulley ${pTag(p)} · backside idler · rim Ø · ${N}T ${belt.label}</div>
@@ -341,7 +343,8 @@ function driveIdlerD(belt, N, st, fail) {
     <div class="dl">
       <button type="button" class="btn primary icon" data-dl-dxf>${ICON_DL}Download DXF</button>
       <button type="button" class="btn icon" data-dl-both>${ICON_PUL}${DX.p.length > 2 ? 'All pulleys' : 'Both pulleys'}</button>
-      <span class="hint">${name} · R12 · mm · ${[...new Set(d.ents.map(e => e.layer))].join(', ')}</span>
+      ${stepButtonHTML(b3)}
+      <span class="hint">${name} · R12 · mm · ${[...new Set(d.ents.map(e => e.layer))].join(', ')}${stepHint(b3)}</span>
     </div>
     ${kvGrid([
       ['Rim Ø', `${len(part.od, 3)}`, fl(part.od, 3)],
@@ -349,14 +352,15 @@ function driveIdlerD(belt, N, st, fail) {
       ['Pitch line → back', `${len(beltBack(belt), 3)}`, fl(beltBack(belt), 3)],
       ['Mount holes', st.holes ? `${st.holes.n} × Ø${rawL(+st.holes.d.toFixed(2))} on Ø${lenR(+st.holes.pcd.toFixed(2))}` : '—', st.holes ? rawL(+st.holes.pcd.toFixed(3)) : null],
       ['Bore', bl, bc],
-      ['Flange Ø', d.flR ? `${len(2 * d.flR, 2)}` : '—', d.flR ? fl(2 * d.flR, 2) : null],
+      ...rimRows(b3, st, true),
     ])}
     ${notesHTML(notes)}
     ${asmHTML()}`;
   rollNumbers(res);
   animateHero(res);
-  rollTo($('d-viz-meta'), `${belt.label} · ${N}T backside idler · ${bl === 'none' ? 'no bore' : bl}${st.holes ? ` · ${st.holes.n} holes` : ''}`);
+  rollTo($('d-viz-meta'), `${belt.label} · ${N}T backside idler · ${bl === 'none' ? 'no bore' : bl}${st.holes ? ` · ${st.holes.n} holes` : ''}${st.rims === 'none' ? '' : ` · ${st.rims === 'both' ? '2 rims' : '1 rim'}`}`);
   drawProfile(DX.doc);
+  drawStepViews(b3);
 }
 /* the drive of a layout at the C2C its exports use (the Center distance tab's includes the tension allowance) */
 const driveExportGeo = (o, belt) => (o.g.valid ? driveAt(belt || o.belt, o.g.ps, o.labelC) : null);

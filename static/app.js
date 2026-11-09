@@ -212,6 +212,7 @@ function frame(ts) {
     sc.s += ds;
     if (sc.chain) chainSceneTick(svg, ds); else sceneTick(svg, ds);
   }
+  if (PAGE === 'belt' && spin3D(dt, ANIM.cur)) tweening = true;   // Pulley DXF & STEP tab: the 3D model turns too
   ANIM.raf = ANIM.playing || ANIM.cur > 0 || tweening ? requestAnimationFrame(frame) : 0;
   if (!ANIM.raf) ANIM.last = 0;
 }
@@ -391,7 +392,7 @@ function sendToA(teeth) {
 }
 
 /* ================= SECTION 3: pulley DXF ================= */
-const DX = { type: 'HTD5M', cur: 0, link: true, doc: null, flhTouched: false };
+const DX = { type: 'HTD5M', cur: 0, link: true, doc: null, flhTouched: false, fwTouched: false };
 /* linked mode: the role 1 pulley (left / origin) and role 2 (right / at the C2C) take their teeth and belt type from the
    calculator tab, both ways; added pulleys always use their own teeth */
 function layoutSrc() {
@@ -425,16 +426,17 @@ function pushLayout(kind) {
 /* each pulley keeps its own form values; the form always shows pulley DX.cur. DX.p is the drive, in belt order:
    { id, name, side (+1 teeth wrap it | −1 backside idler), ref, dist, ang (added pulleys only: C2C in mm and angle in
    degrees from the centre of pulley `ref`, which they move with), … } */
-const P_FIELDS = ['d-n', 'd-bore', 'd-flat', 'd-clear', 'd-hn', 'd-hd', 'd-hp', 'd-hr', 'd-fit', 'd-flh'];
+const P_FIELDS = ['d-n', 'd-bore', 'd-flat', 'd-clear', 'd-hn', 'd-hd', 'd-hp', 'd-hr', 'd-fit', 'd-flh', 'd-fw', 'd-fla', 'd-flt'];
 const P_CHECKS = ['d-flange', 'd-pitch'];
 function newPulley(n, k = 1) {
-  return { id: `p${k}`, name: `P${k}`, side: 1, ref: null, dist: 0, ang: 0, bore: 'round', borePre: 'custom', holePre: 'none',
-    v: { 'd-n': String(n), 'd-bore': '5', 'd-flat': '5.5', 'd-clear': '0', 'd-hn': '4', 'd-hd': '4.3', 'd-hp': '22.627', 'd-hr': '45', 'd-fit': '0', 'd-flh': '4' },
-    c: { 'd-flange': false, 'd-pitch': false } };
+  return { id: `p${k}`, name: `P${k}`, side: 1, ref: null, dist: 0, ang: 0, bore: 'round', borePre: 'custom', holePre: 'none', rim: 'none',
+    v: { 'd-n': String(n), 'd-bore': '5', 'd-flat': '5.5', 'd-clear': '0', 'd-hn': '4', 'd-hd': '4.3', 'd-hp': '22.627', 'd-hr': '45', 'd-fit': '0', 'd-flh': '4',
+      'd-fw': '16', 'd-fla': String(RIM_A_DEF), 'd-flt': String(RIM_T_DEF) },
+    c: { 'd-flange': true, 'd-pitch': false } };
 }
 DX.p = [newPulley(20, 1), newPulley(40, 2)];
 DX.roles = ['p1', 'p2'];                                   // ids of the pulleys whose C2C the calculators solve
-['bore', 'borePre', 'holePre'].forEach(k => Object.defineProperty(DX, k, { get: () => DX.p[DX.cur][k], set: v => { DX.p[DX.cur][k] = v; } }));
+['bore', 'borePre', 'holePre', 'rim'].forEach(k => Object.defineProperty(DX, k, { get: () => DX.p[DX.cur][k], set: v => { DX.p[DX.cur][k] = v; } }));
 function readForm() {
   const s = DX.p[DX.cur];
   P_FIELDS.forEach(id => { s.v[id] = $(id).value; });
@@ -447,6 +449,7 @@ function writeForm() {
   setBoreShape(s.bore);
   setType($('d-bore-preset'), s.borePre);
   setType($('d-hole-preset'), s.holePre);
+  setType($('d-rims'), s.rim);
   plistSoon();
 }
 function switchPulley(j, skipRead) {
@@ -461,6 +464,7 @@ function switchPulley(j, skipRead) {
     clearTimeout(s._t); s._t = setTimeout(() => s.classList.remove('pv-swap'), 900);
   }
   updateInds(); renderD(); redrawLayouts();
+  if (changed) kick3D();
 }
 /* every pulley side by side in one file (both, for the original pair: left then right); layers and titles follow the names */
 function bothDoc() {
@@ -526,7 +530,8 @@ function dxfSettings(i = DX.cur) {
   return {
     bore: s.borePre === 'none' ? 'none' : s.bore, borePre: s.borePre, holePre: s.holePre, n: Math.round(v('d-n')),
     boreNom: sz, boreSize: sz + 2 * cl, flatNom: v('d-flat'), boreFlat: v('d-flat') + 2 * cl, clear: cl, holes, fit: v('d-fit') || 0,
-    flange: !!s.c['d-flange'], flh: v('d-flh') || 0, pitch: !!s.c['d-pitch'],
+    flange: s.rim !== 'none' && !!s.c['d-flange'], flh: v('d-flh') || 0, pitch: !!s.c['d-pitch'],
+    fw: v('d-fw'), rims: s.rim, fla: v('d-fla'), flt: v('d-flt'),       // STEP: face width and rims (pulley3d.js)
   };
 }
 function chipSource() {
@@ -557,6 +562,11 @@ function boreLabel(st) {
 function renderD() {
   pullLayout();
   const belt = BELTS[DX.type];
+  if (!DX.fwTouched) {                                // the face width follows the belt width until it's edited
+    const fw = String(faceWidthAuto(belt));
+    if ($('d-fw').value !== fw) $('d-fw').value = fw;
+    DX.p.forEach(p => { p.v['d-fw'] = fw; });
+  }
   const N = Math.round(num($('d-n')));
   const st = dxfSettings();
   const res = $('d-results');
@@ -571,10 +581,13 @@ function renderD() {
   $('d-hole-hint').textContent = DX.holePre === 'custom'
     ? 'Holes are spaced evenly on the bolt circle; rotation 0° puts the first hole on +X.'
     : 'goBILDA 16 mm pattern = 4 holes on a 16 mm square (Ø22.63 bolt circle). Ø4.3 clears M4; use Ø3.3 to tap M4.';
-  $('d-flange-wrap').hidden = !st.flange;
+  $('d-rim-cfg').hidden = st.rims === 'none';
+  const fwAuto = faceWidthAuto(belt);
+  setChips($('d-fwchips'), `<span class="chips-l">Belt ${lenR(beltW(belt.key))} wide:</span>`
+    + `<button type="button" class="chip" data-fw="auto"${DX.fwTouched || Math.abs(st.fw - fwAuto) > 1e-6 ? '' : ' aria-pressed="true"'}>${len(fwAuto, 2)} · belt + ${len(1, 0)}</button>`);
   DX.doc = null;
 
-  const fail = (title, msg) => { res.innerHTML = resetNumbers(res) + errorBlock(title, msg); drawProfile(null); };
+  const fail = (title, msg) => { res.innerHTML = resetNumbers(res) + errorBlock(title, msg); drawProfile(null); drawStepViews(null); };
   if (!(N >= 6 && N <= 400)) return fail('Missing input', 'Enter between 6 and 400 teeth.');
   if (st.bore !== 'none' && !(st.boreSize > 0)) return fail('Missing input', 'Enter a bore size, or pick “No bore”.');
   if (!holesOK(st.holes)) return fail('Missing input', 'Check the mounting-hole fields (1–24 holes, size and bolt circle).');
@@ -598,6 +611,8 @@ function renderD() {
   if (doc.flR) notes.push(['info', `Flange disc is placed beside the pulley as a separate part (FLANGE layer), with the same bore and holes.`]);
   if (st.holes && DX.holePre !== 'custom') notes.push(['info', `${DX.holePre === 'sonic' ? 'Sonic Hub' : 'Servo hub'} pattern from goBILDA's 16 mm hub pattern (the same layout their hub-mount sprockets use around a 14 mm bore). Check it against your hub before cutting metal.`]);
   if (st.clear) notes.push(['info', `Bore clearance ${sgnL(st.clear, 2)} per side — the bore is cut at ${len(st.boreSize, 3)}.`]);
+  const b3 = pulleyBuild();
+  notes.push(...rimNotes(b3));
 
   const rootD = part.od - 2 * part.D;
   res.innerHTML = `
@@ -610,7 +625,8 @@ function renderD() {
     <div class="dl">
       <button type="button" class="btn primary icon" data-dl-dxf>${ICON_DL}Download DXF</button>
       <button type="button" class="btn icon" data-dl-both>${ICON_PUL}${DX.p.length > 2 ? 'All pulleys' : 'Both pulleys'}</button>
-      <span class="hint">${DX.doc.name} · R12 · mm · ${layers}</span>
+      ${stepButtonHTML(b3)}
+      <span class="hint">${DX.doc.name} · R12 · mm · ${layers}${stepHint(b3)}</span>
     </div>
     ${kvGrid([
       ['Pitch Ø', `${len(part.pd, 3)}`, fl(part.pd, 3)],
@@ -622,14 +638,15 @@ function renderD() {
       ['Tip radius', `${len(part.rt, 3)}`, fl(part.rt, 3)],
       ['Mount holes', st.holes ? `${st.holes.n} × Ø${rawL(+st.holes.d.toFixed(2))} on Ø${lenR(+st.holes.pcd.toFixed(2))}` : '—', st.holes ? rawL(+st.holes.pcd.toFixed(3)) : null],
       ['Bore', bl, bc],
-      ['Flange Ø', doc.flR ? `${len(2 * doc.flR, 2)}` : '—', doc.flR ? fl(2 * doc.flR, 2) : null],
+      ...rimRows(b3, st),
     ])}
     ${notesHTML(notes)}
     ${asmHTML()}`;
   rollNumbers(res);
   animateHero(res);
-  rollTo($('d-viz-meta'), `${belt.label} · ${N}T · ${bl === 'none' ? 'no bore' : bl}${st.holes ? ` · ${st.holes.n} holes` : ''}`);
+  rollTo($('d-viz-meta'), `${belt.label} · ${N}T · ${bl === 'none' ? 'no bore' : bl}${st.holes ? ` · ${st.holes.n} holes` : ''}${st.rims === 'none' ? '' : ` · ${st.rims === 'both' ? '2 rims' : '1 rim'}`}`);
   drawProfile(DX.doc);
+  drawStepViews(b3);
 }
 
 function drawProfile(doc) {
@@ -937,7 +954,7 @@ const pageOfTab = name => (name.startsWith('k-') ? 'chain' : 'belt');
 /* ---- top-level pages: the timing-belt calculator and the chain generator ---- */
 const pagesEl = document.querySelector('.pages'), pageInd = pagesEl.querySelector('.page-ind');
 const PAGE_INFO = {
-  belt: { title: 'Timing Belt Calculator', sub: 'Center distance, belt length, pulley & belt DXF for HTD, GT2, GT3 and MXL / XL / L / H belts' },
+  belt: { title: 'Timing Belt Calculator', sub: 'Center distance, belt length, pulley DXF / STEP & belt DXF for HTD, GT2, GT3 and MXL / XL / L / H belts' },
   chain: { title: 'Chain Generator', sub: 'Roller chain C2C, chain length, sprocket DXF and chain DXF / STEP — ANSI, ISO, moto and bike chains' },
 };
 function movePageInd() {
@@ -1034,6 +1051,7 @@ function switchTab(name, instant) {
     if (dir && !instant) enterPanel(next, dir);
     updateInds();
     renderTab(name);
+    if (name === 'dxf' && dir && !instant) kick3D();
   };
   if (!dir || instant || reduceMotion) { show(); return; }
   cur.style.setProperty('--lx', `${-dir * 24}px`);
@@ -1219,6 +1237,15 @@ $('t-results').addEventListener('click', e => {
   else apiSave('belt/belt/dxf', BT.req, build, { name: doc.name });
 });
 $('d-flh').addEventListener('input', () => { DX.flhTouched = true; renderD(); });
+$('d-fw').addEventListener('input', () => { DX.fwTouched = true; renderD(); });
+['d-fla', 'd-flt'].forEach(id => $(id).addEventListener('input', renderD));
+$('d-fwchips').addEventListener('click', e => {
+  if (!e.target.closest('[data-fw]')) return;
+  const old = num($('d-fw'));
+  DX.fwTouched = false; renderD();
+  nudge($('d-fw'), Math.sign(num($('d-fw')) - old));
+});
+buildSeg($('d-rims'), 'd-rimp', RIM_PRE, DX.rim, v => { DX.rim = v; renderD(); kick3D(); });
 $('d-flange').addEventListener('change', renderD);
 $('d-pitch').addEventListener('change', renderD);
 $('d-bore-type').addEventListener('click', e => {
@@ -1248,6 +1275,7 @@ $('d-results').addEventListener('click', e => {
     apiSave('belt/pulleys/dxf', { type: DX.type, p1: { n: a.n, ...pulleyReq(a) }, p2: { n: b.n, ...pulleyReq(b) } }, build);
     return;
   }
+  if (e.target.closest('[data-dl-step]')) { pulleyStepDownload(); return; }
   if (!e.target.closest('[data-dl-dxf]') || !DX.doc) return;
   const doc = DX.doc;
   if (doc.idler) { driveSave(() => { const d = idlerDoc(doc.belt, doc.N, doc.st); return d.error ? d : { name: doc.name, text: toDXF(d.ents) }; }); return; }
@@ -2325,7 +2353,7 @@ function snapshot() {
     f: Object.fromEntries(FORM_IDS.map(id => [id, $(id).value])),
     c: Object.fromEntries(CHECK_IDS.map(id => [id, $(id).checked])),
     a: { type: A.type, unit: A.unit }, b: { type: B.type, stock: stockText, selL: B.selL }, calc: lastCalc,
-    d: { type: DX.type, cur: DX.cur, p: DX.p, roles: DX.roles, flhTouched: DX.flhTouched, link: DX.link },
+    d: { type: DX.type, cur: DX.cur, p: DX.p, roles: DX.roles, flhTouched: DX.flhTouched, fwTouched: DX.fwTouched, link: DX.link },
     t: { type: BT.type, link: BT.link, wBy: BT.wBy, hBy: BT.hBy },
     speed: ANIM.speed, playing: ANIM.playing, unit: UNIT, ref: REF,
   };
@@ -2347,7 +2375,9 @@ function cleanPulley(p, n, k) {                       // k: the number it gets w
   return { id, name, side: p.side === -1 ? -1 : 1, ref: typeof p.ref === 'string' && /^p\d{1,3}$/.test(p.ref) ? p.ref : null,
     dist: Math.max(0, at(p.dist)), ang: at(p.ang), x: at(p.x), y: at(p.y),         // x / y: positions saved before C2C dimensions
     bore: pick(p.bore, ['round', 'hex', 'square', 'rex', 'd', 'dd'], 'round'), borePre: pick(p.borePre, ['none', 'rev', 'rex', 'gbd', 'b14', 'custom'], 'custom'),
-    holePre: pick(p.holePre, ['none', 'sonic', 'servo', 'custom'], 'none'), v, c };
+    holePre: pick(p.holePre, ['none', 'sonic', 'servo', 'custom'], 'none'),
+    rim: pick(p.rim, RIM_MODES, p.rim == null && p.c && p.c['d-flange'] ? 'both' : 'none'),   // older settings: a flange disc = rims
+    v, c };
 }
 function restoreSettings() {
   if (consent !== 'yes' || !STORE) return null;
@@ -2395,6 +2425,7 @@ function restoreSettings() {
       }
       DX.cur = Number.isInteger(s.d.cur) && s.d.cur >= 0 && s.d.cur < DX.p.length ? s.d.cur : 0;
       DX.flhTouched = !!s.d.flhTouched;
+      DX.fwTouched = !!s.d.fwTouched;
       DX.link = s.d.link !== false; $('d-link').checked = DX.link;
       writeForm();
     }
@@ -2590,7 +2621,7 @@ function chainLayoutProblems() {
   return out;
 }
 function renderAlerts() {
-  const tops = alertTops(), box = $('alerts'), probs = (PAGE === 'chain' ? sprocketProblems().concat(chainLayoutProblems()) : pulleyProblems().concat(thickProblems(), beltLayoutProblems())).filter(p => !DISMISSED.has(p.dkey) && !FLYING.has(p.id)), ids = probs.map(p => p.id);
+  const tops = alertTops(), box = $('alerts'), probs = (PAGE === 'chain' ? sprocketProblems().concat(chainLayoutProblems()) : pulleyProblems().concat(rimProblems(), thickProblems(), beltLayoutProblems())).filter(p => !DISMISSED.has(p.dkey) && !FLYING.has(p.id)), ids = probs.map(p => p.id);
   box.querySelectorAll('.alert').forEach(el => {
     if (ids.includes(el.dataset.id) || el.classList.contains('out') || el.classList.contains('popping')) return;
     el.classList.add('out');
@@ -2777,7 +2808,7 @@ function lenBox(id, isLen = () => true, exact = false) {     // exact: keep the 
 }
 lenBox('a-len', () => A.unit === 'mm', true);
 lenBox('ka-len', () => K.unit === 'mm', true);
-['a-allow', 'b-c', 'd-bore', 'd-clear', 'd-flat', 'd-hd', 'd-hp', 'd-fit', 'd-flh', 't-h-num',
+['a-allow', 'b-c', 'd-bore', 'd-clear', 'd-flat', 'd-hd', 'd-hp', 'd-fit', 'd-flh', 'd-fw', 'd-flt', 't-h-num',
   'ka-allow', 'kb-c', 'ks-bore', 'ks-clear', 'ks-flat', 'ks-hd', 'ks-hp', 'ks-fit'].forEach(id => lenBox(id));
 
 function setUnit(u, save) {                               // save: the user switched (animate); else a silent restore

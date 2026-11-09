@@ -240,6 +240,12 @@ svg text.empty{fill:var(--ink-3);font-family:var(--sans)}
 .dxf-views figure{margin:0;border:1px solid var(--line);border-radius:12px;background:var(--panel-2);position:relative;overflow:hidden}
 .dxf-views figcaption{position:absolute;top:8px;left:12px;font:500 11px var(--mono);color:var(--ink-3);letter-spacing:.04em;pointer-events:none}
 .dxf-views svg{display:block;width:100%;height:clamp(240px,32vw,360px)}
+/* Pulley DXF & STEP: 3D model (faces painted back to front, each in its own shade) and the rim section sketch */
+.dxf-views svg.p3d path{fill-rule:evenodd;stroke-width:.6px;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+svg .sec-belt{fill:var(--accent);fill-opacity:.82;stroke:var(--belt-edge)}
+svg .sec-hl{stroke:var(--ink-3);stroke-opacity:.45}
+svg .sec-axis{stroke-dasharray:9 3 2 3}
+svg text.sec-ang{fill:var(--accent)}
 svg .pv-part{fill:var(--pulley);stroke:var(--ink);fill-rule:evenodd}
 svg .pv-flange{fill:var(--boss);stroke:var(--ink-2);fill-rule:evenodd}
 svg .pv-pitch{fill:none;stroke:var(--accent);stroke-dasharray:5 4}

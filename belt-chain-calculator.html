@@ -37,7 +37,7 @@
     <div class="tabs" id="tabs-belt" role="tablist"><span class="tab-ind" aria-hidden="true"></span>
       <button class="tab" role="tab" data-tab="c2c" aria-selected="true"><span class="k">01</span><span class="lg">Center distance</span><span class="sh">C2C</span></button>
       <button class="tab" role="tab" data-tab="length" aria-selected="false"><span class="k">02</span><span class="lg">Belt length</span><span class="sh">Length</span></button>
-      <button class="tab" role="tab" data-tab="dxf" aria-selected="false"><span class="k">03</span><span class="lg">Pulley DXF</span><span class="sh">Pulley</span></button>
+      <button class="tab" role="tab" data-tab="dxf" aria-selected="false"><span class="k">03</span><span class="lg">Pulley DXF &amp; STEP</span><span class="sh">Pulley</span></button>
       <button class="tab" role="tab" data-tab="belt" aria-selected="false"><span class="k">04</span><span class="lg">Belt DXF</span><span class="sh">Belt</span></button>
       <button class="tab" role="tab" data-tab="real" aria-selected="false"><span class="k">05</span><span class="lg">True size</span><span class="sh">1:1</span></button>
     </div>
@@ -212,16 +212,37 @@
           <span class="hint sans" id="d-hole-hint"></span>
         </div>
 
-        <div class="step"><span class="num">5</span><h2>Output</h2></div>
+        <div class="step"><span class="num">5</span><h2>Width &amp; rims <span class="u" style="text-transform:none;letter-spacing:0">· 3D model (STEP)</span></h2></div>
+        <div class="field">
+          <label for="d-fw">Face width <span class="u">mm · teeth along the axis</span></label>
+          <div class="stepper"><button type="button" data-step="-1" data-for="d-fw" aria-label="Narrower">−</button><input id="d-fw" type="number" inputmode="decimal" min="1" max="300" step="0.5" value="16"><button type="button" data-step="1" data-for="d-fw" aria-label="Wider">+</button></div>
+          <div class="chips" id="d-fwchips"></div>
+        </div>
+        <div class="seg seg-sm" id="d-rims"></div>
+        <div id="d-rim-cfg" class="cfg" hidden>
+          <div class="row2">
+            <div class="field">
+              <label for="d-flh">Height <span class="u">mm above OD</span></label>
+              <div class="stepper"><button type="button" data-step="-1" data-for="d-flh" aria-label="Lower rim">−</button><input id="d-flh" type="number" inputmode="decimal" min="0.2" max="60" step="0.5" value="4"><button type="button" data-step="1" data-for="d-flh" aria-label="Higher rim">+</button></div>
+            </div>
+            <div class="field">
+              <label for="d-fla">Angle <span class="u">° · 0 = flat wall</span></label>
+              <div class="stepper"><button type="button" data-step="-1" data-for="d-fla" aria-label="Smaller angle">−</button><input id="d-fla" type="number" inputmode="decimal" min="0" max="60" step="5" value="45"><button type="button" data-step="1" data-for="d-fla" aria-label="Larger angle">+</button></div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="d-flt">Thickness <span class="u">mm · at the rim edge</span></label>
+            <div class="stepper"><button type="button" data-step="-1" data-for="d-flt" aria-label="Thinner rim">−</button><input id="d-flt" type="number" inputmode="decimal" min="0.2" max="30" step="0.1" value="1.5"><button type="button" data-step="1" data-for="d-flt" aria-label="Thicker rim">+</button></div>
+          </div>
+          <label class="check"><input type="checkbox" id="d-flange" checked><span>Rim as a flat disc in the DXF <em>· separate part, same bore</em></span></label>
+          <span class="hint sans" id="d-rim-hint">The wall leans out from the teeth by the angle, then the rim edge runs straight for the thickness. The DXF disc is flat: cut one per rim.</span>
+        </div>
+
+        <div class="step"><span class="num">6</span><h2>Output</h2></div>
         <div class="field">
           <label for="d-fit">Groove fit offset <span class="u">mm</span></label>
           <div class="stepper"><button type="button" data-step="-1" data-for="d-fit" aria-label="Tighter">−</button><input id="d-fit" type="number" inputmode="decimal" min="-0.3" step="0.05" value="0"><button type="button" data-step="1" data-for="d-fit" aria-label="Looser">+</button></div>
           <span class="hint sans">Positive = looser grooves (e.g. +0.1 for FDM printing). Handle laser / router kerf in your CAM.</span>
-        </div>
-        <label class="check"><input type="checkbox" id="d-flange"><span>Add flange disc <em>· separate part, same bore</em></span></label>
-        <div class="field" id="d-flange-wrap" hidden>
-          <label for="d-flh">Flange height above OD <span class="u">mm</span></label>
-          <div class="stepper"><button type="button" data-step="-1" data-for="d-flh" aria-label="Lower flange">−</button><input id="d-flh" type="number" inputmode="decimal" min="0.5" step="0.5" value="4"><button type="button" data-step="1" data-for="d-flh" aria-label="Higher flange">+</button></div>
         </div>
         <label class="check"><input type="checkbox" id="d-pitch"><span>Include pitch circle <em>· PITCH layer, construction only</em></span></label>
       </div>
@@ -231,11 +252,17 @@
 
     <div class="card viz">
       <div class="viz-head">
-        <div class="viz-title"><h3>DXF preview</h3><span class="meta" id="d-viz-meta"></span></div>
+        <div class="viz-title"><h3>DXF &amp; STEP preview</h3><span class="meta" id="d-viz-meta"></span></div>
+        <div class="viz-ctrl">
+          <button type="button" class="btn sm icon" data-anim-toggle></button>
+          <label class="spd"><span>Speed</span><input type="range" min="0.1" max="3" step="0.05" value="1" data-anim-speed aria-label="Animation speed"><output data-anim-out>1.0×</output></label>
+        </div>
       </div>
       <div class="dxf-views">
         <figure><figcaption>PART</figcaption><svg id="d-svg-full" role="img" aria-label="Pulley outline preview"></svg></figure>
         <figure><figcaption>GROOVE DETAIL</figcaption><svg id="d-svg-zoom" role="img" aria-label="Groove detail preview"></svg></figure>
+        <figure><figcaption>3D · STEP MODEL</figcaption><svg id="d-3d" class="p3d" role="img" aria-label="3D preview of the pulley STEP model"></svg></figure>
+        <figure><figcaption>RIM SECTION</figcaption><svg id="d-sec" role="img" aria-label="Half section through the pulley and its rims, with dimensions"></svg></figure>
       </div>
     </div>
   </section>
@@ -621,6 +648,7 @@
       <code>L = 2√(C² − (R−r)²) + π(R+r) + 2(R−r)·asin((R−r)/C)</code>, solved numerically for C.
       Pitch Ø = teeth × pitch / π. Outside Ø = pitch Ø − 2 × pitch-line differential.</p>
     <p><b>DXF.</b> Groove = round bottom + tapered flanks + tip fillets, fitted to the groove shapes of the widely used open-source parametric pulley script (within ~0.015 mm for HTD 5M and GT2 2mm; HTD 3M and GT2 3mm scaled to their published depth and width). MXL, XL, L and H (ANSI / RMA inch pitch) use the ISO 5294 trapezoidal groove: 40° flanks, flat bottom with corner radii, and ISO 5296 belt teeth; their part numbers follow the inch convention, e.g. 130XL025 = 13.0 in long, 0.25 in wide. Belt teeth = the groove shape with tip clearance and ~4 % of the pitch flank clearance, wrapped on the pulley OD and straight on the spans; assembly exports turn each pulley so its grooves sit under the belt teeth. Exported as R12 ASCII DXF in millimetres with true arcs (polyline bulges). Test-fit a printed or cut pulley before relying on it under load.</p>
+    <p><b>STEP.</b> Each pulley or backside idler exports as one exact solid (AP214, mm): the same grooves run the face width, with optional rims on one or both ends — height above the OD, wall angle (0° = flat, more = the wall leans out like a funnel, starting 0.2 mm above the OD) and thickness at the rim edge — and the bore and mounting holes go through everything.</p>
     <p>Teeth-in-mesh and minimum-pulley warnings are rules of thumb — check your belt maker's design guide for load ratings.</p>
     </div>
     <div id="foot-chain" hidden>
@@ -653,12 +681,14 @@
 <script src="static/belt.js"></script>
 <script src="static/chain.js"></script>
 <script src="static/step.js"></script>
+<script src="static/pulley3d.js"></script>
 <script src="static/calc.js"></script>
 <script src="static/drive.js"></script>
 <script src="static/motion.js"></script>
 <script src="static/api.js"></script>
 <script src="static/truesize.js"></script>
 <script src="static/drive-ui.js"></script>
+<script src="static/pulley3d-ui.js"></script>
 <script src="static/app.js"></script>
 
 </body>

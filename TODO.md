@@ -11,6 +11,8 @@ from `file://`; load order matters and is set in `belt-chain-calculator.html`):
 | `static/belt.js` | Belt data, C2C ⇄ length, pulley grooves, belt teeth, layouts, DXF writer — no DOM |
 | `static/chain.js` | Chain data, sprockets, chain length, exact loop, plates, DXF drawings — no DOM |
 | `static/step.js` | STEP (3D) writer — no DOM |
+| `static/pulley3d.js` | Pulley / idler STEP: rims (height, angle, thickness), the one-piece B-rep solid, 3D preview faces, rim section — no DOM |
+| `static/pulley3d-ui.js` | Pulley DXF & STEP tab, 3D side: face width & rims, turning 3D preview (on the page's animation loop), rim section sketch, STEP download, STEP warnings — loads before `app.js` |
 | `static/motion.js` | Every animation: motion preference, rolling numbers, glide, panels, morph, goo, pop, warning stack, toasts, downloads |
 | `static/truesize.js` | Screen scale, reference objects, 1:1 drawing + ruler |
 | `static/drive.js` | N-pulley belt drives (toothed pulleys + backside idlers, belt in list order): loop geometry, C2C / length answers, outline, DXF — no DOM |
@@ -21,7 +23,7 @@ from `file://`; load order matters and is set in `belt-chain-calculator.html`):
 With the original two toothed pulleys the page runs exactly the 2-pulley code above (and the Python API); `drive.js` / `drive-ui.js`
 take over for 3+ pulleys or a backside idler, computed in the page (the API has no N-pulley endpoints yet).
 
-`belt.js`, `chain.js` and `step.js` are the parts to port to Python (steps 2–3 below); `motion.js` and
+`belt.js`, `chain.js`, `step.js` and `pulley3d.js` are the parts to port to Python (steps 2–3 below); `motion.js` and
 `styles.css` are the starting point for steps 5–6.
 
 Goal: all calculation and file generation in a Python backend; the page becomes a thin front end
