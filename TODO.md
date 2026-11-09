@@ -20,6 +20,10 @@ from `file://`; load order matters and is set in `belt-chain-calculator.html`):
 | `static/drive.css` | Styles for the pulley list and the N-pulley layout marks |
 | `static/app.js` | The page: state, rendering, inputs, warnings, settings, start-up |
 
+**After editing anything in `static/`, run `py tools/stamp.py` before committing.** The page links every file with a
+hash of its contents (`static/app.js?v=1a2b3c4d`), so a browser that loads a new page also loads its new scripts and
+styles instead of 10-minute-old cached ones (GitHub Pages' cache time). `py tools/stamp.py --check` only reports stale stamps.
+
 With the original two toothed pulleys the page runs exactly the 2-pulley code above (and the Python API); `drive.js` / `drive-ui.js`
 take over for 3+ pulleys or a backside idler, computed in the page (the API has no N-pulley endpoints yet).
 
